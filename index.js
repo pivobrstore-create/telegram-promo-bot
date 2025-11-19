@@ -1,41 +1,34 @@
 import TelegramBot from "node-telegram-bot-api";
-import axios from "axios";
 
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
 const affiliateTag = process.env.AFFILIATE_TAG;
 
-// Inicializa o bot
+// Inicia o bot
 const bot = new TelegramBot(token, { polling: true });
 
-// Mensagem de boas-vindas
-bot.on("message", (msg) => {
-  bot.sendMessage(msg.chat.id, "Bot de ofertas iniciado com sucesso! 🔥");
+// Mensagem padrão
+console.log("Bot iniciado...");
+
+// ------------------- COMANDO /start -------------------
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, "Bot ativo! 🚀 Use /postar <mensagem> para enviar ao canal.");
 });
 
-// Função para enviar oferta para o canal
-async function sendOffer() {
-  try {
-    const product = {
-      title: "Oferta Teste 🔥",
-      price: "R$ 99,90",
-      link: `https://www.amazon.com.br/dp/B0CHXSGG6H?tag=${affiliateTag}`,
-      image:
-        "https://m.media-amazon.com/images/I/61u5X2rVJ1L._AC_SX522_.jpg",
-    };
+// ------------------- COMANDO /postar -------------------
+bot.onText(/\/postar (.+)/, (msg, match) => {
+  const texto = match[1];
 
-    const caption = `${product.title}\n💰 ${product.price}\n👉 ${product.link}`;
-
-    await bot.sendPhoto(channelId, product.image, {
-      caption: caption,
+  bot.sendMessage(channelId, texto)
+    .then(() => {
+      bot.sendMessage(msg.chat.id, "✔️ Mensagem enviada ao canal!");
+    })
+    .catch((err) => {
+      bot.sendMessage(msg.chat.id, "❌ Erro ao enviar:\n" + err.message);
     });
+});
 
-    console.log("Oferta enviada com sucesso!");
-  } catch (error) {
-    console.error("Erro ao enviar oferta:", error);
-  }
-}
-
-// Envia a cada 30 minutos só para teste
-setInterval(sendOffer, 30 * 60 * 1000);
-
+// ------------------- SE FOR SÓ TEXTO NORMAL -------------------
+bot.on("message", (msg) => {
+  if (msg.text.startsWith("/")) return; // evita conflito
+});
