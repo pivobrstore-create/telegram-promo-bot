@@ -5,7 +5,7 @@ const channelId = process.env.CHANNEL_ID;
 const affiliateTag = process.env.AFFILIATE_TAG;
 
 // Inicia o bot
-const bot = new TelegramBot(token, { polling: true });
+const bot = new TelegramBot(TOKEN, { polling: true });
 
 // Mensagem padrão
 console.log("Bot iniciado...");
