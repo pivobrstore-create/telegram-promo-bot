@@ -4,17 +4,15 @@ import * as cheerio from "cheerio";
 import schedule from "node-schedule";
 
 /**
- * MODO 2 - Scrape on demand (and optional list-run)
+ * Modo Híbrido — Manual + tentativa de enriquecimento
  *
- * ENV vars required:
- * - BOT_TOKEN        (token do BotFather)
- * - CHANNEL_ID       (ex: -1001234567890)
- * - AFFILIATE_TAG    (ex: pivobr-20)  default: pivobr-20
- *
- * Optional:
- * - ADMIN_IDS        (CSV de IDs que podem usar /oferta e /runlist)
- * - LIST_URLS        (CSV de URLs; se preenchido, o bot pode rodar automaticamente)
- * - SCHEDULE_CRON    (cron para executar LIST_URLS; default: '0 * * * *' => a cada hora)
+ * ENV vars:
+ * BOT_TOKEN      - token do BotFather
+ * CHANNEL_ID     - id do canal (-100...)
+ * AFFILIATE_TAG  - pivobr-20 (padrão)
+ * ADMIN_IDS      - csv (opcional) ex: 12345678,98765432
+ * LIST_URLS      - csv (opcional) para agendamento
+ * SCHEDULE_CRON  - cron (opcional) ex "0 * * * *"
  */
 
 const token = process.env.BOT_TOKEN;
@@ -24,223 +22,278 @@ const ADMIN_IDS = (process.env.ADMIN_IDS || "").split(",").map(s => s.trim()).fi
 const LIST_URLS = (process.env.LIST_URLS || "").split(",").map(s => s.trim()).filter(Boolean);
 const SCHEDULE_CRON = process.env.SCHEDULE_CRON || "0 * * * *"; // por hora
 
-if (!token) {
-  console.error("❌ ERRO: BOT_TOKEN não definido.");
-  process.exit(1);
-}
-if (!channelId) {
-  console.error("❌ ERRO: CHANNEL_ID não definido.");
-  process.exit(1);
-}
+if (!token) { console.error("❌ BOT_TOKEN ausente"); process.exit(1); }
+if (!channelId) { console.error("❌ CHANNEL_ID ausente"); process.exit(1); }
 
 const bot = new TelegramBot(token, { polling: true });
-console.log("🚀 Bot iniciado (Modo 2 - scrap on demand)");
+console.log("🚀 Bot iniciado (Modo Híbrido — Manual + Enriquecimento)");
 
-// Simple runtime dedupe to avoid double posting
+// ------------------ CONFIG: NICHOS E FRASES ------------------
+
+const NICHOS_KEYWORDS = {
+  "beleza": ["beleza","skincare","shampoo","creme","hidratante","maquiagem","perfume","cosmético"],
+  "luxo": ["luxo","importado","eau de parfum","premium","designer"],
+  "saude": ["saúde","saude","vitamina","suplemento","farmacia","cuidados pessoais"],
+  "aparelhos": ["secador","prancha","barbeador","depilador","massageador","aparelho"],
+  "bebidas": ["café","cafe","cerveja","vinho","bebida","bebidas","whisky","gin","vodka"],
+  "alimentos": ["alimento","alimentos","gourmet","chocolate","comida","snack","proteína"]
+};
+
+const FRASES = {
+  general: [
+    "🔥 Oferta especial! Não perca!",
+    "⚡ Chance única, cai no colo e some rápido!",
+    "⏳ Tempo esgotando! Aproveite AGORA!",
+    "💥 Promoção quente! Só para os mais rápidos!",
+    "🎯 Desconto exclusivo para você!"
+  ],
+  beleza: [
+    "💄 Glamour com preço baixinho — imperdível!",
+    "🌸 Para elevar sua rotina de beleza gastando menos!",
+    "✨ Luxo acessível HOJE! Aproveite!"
+  ],
+  luxo: [
+    "💎 Produto premium com preço comum — aproveite!",
+    "✨ Luxo acessível por tempo limitado!",
+    "⚡ Oferta de luxo: oportunidade rara!"
+  ],
+  saude: [
+    "💊 Oferta de saúde com ótimo custo-benefício!",
+    "🩺 Condição promocional por tempo limitado!",
+    "🟢 Produto de cuidado pessoal com desconto!"
+  ],
+  aparelhos: [
+    "⚙️ Tecnologia e autocuidado com desconto!",
+    "🔧 Upgrade na rotina com grande desconto!",
+    "🔥 Preço especial em aparelhos pessoais!"
+  ],
+  bebidas: [
+    "☕ Oferta gourmet — não deixe passar!",
+    "🍷 Oportunidade para os amantes de rótulos!",
+    "🍺 Promoção exclusiva em bebidas!"
+  ],
+  alimentos: [
+    "🍽 Oferta gourmet irresistível!",
+    "🍫 Delícia com preço lá embaixo!",
+    "🛒 Achado do dia para sua despensa!"
+  ]
+};
+
+// fallback phrases combined
+const ALL_FRASES = Array.from(new Set([
+  ...FRASES.general,
+  ...FRASES.beleza, ...FRASES.luxo, ...FRASES.saude, ...FRASES.aparelhos, ...FRASES.bebidas, ...FRASES.alimentos
+]));
+
+// ------------------ util: detectar nicho por texto/link ------------------
+function detectNicho(text) {
+  const low = (text || "").toLowerCase();
+  for (const [nicho, keys] of Object.entries(NICHOS_KEYWORDS)) {
+    for (const k of keys) {
+      if (low.includes(k)) return nicho;
+    }
+  }
+  return "general";
+}
+
+// ------------------ util: escolher frase (por nicho) ------------------
+function pickPhrase(nicho) {
+  const pool = (FRASES[nicho] && FRASES[nicho].length) ? [...FRASES[nicho], ...FRASES.general] : ALL_FRASES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// ------------------ DEDUPE ------------------
 const recent = new Set();
-const DEDUPE_TTL_MS = 1000 * 60 * 60 * 6; // 6h
-function addDedupe(key) {
+const DEDUPE_TTL = 1000 * 60 * 60 * 6; // 6h default
+function markPosted(key) {
   recent.add(key);
-  setTimeout(() => recent.delete(key), DEDUPE_TTL_MS);
+  setTimeout(() => recent.delete(key), DEDUPE_TTL);
 }
-function hasDedupe(key) {
-  return recent.has(key);
-}
+function isPosted(key) { return recent.has(key); }
 
-// Utility: convert Amazon URL to affiliate tag
-function toAmazonAffiliate(url) {
+// ------------------ AFFILIATE (mantém seu link curto se já tiver) ------------------
+function toAffiliate(url) {
   try {
     if (!url) return url;
     const u = new URL(url);
     if (u.hostname.includes("amazon.")) {
-      // set or replace tag param
       u.searchParams.set("tag", AFFILIATE_TAG);
       return u.toString();
     }
+    // se já for um link curto tipo amzn.to, mantemos exatamente como mandado (não alteramos)
     return url;
   } catch (e) {
     return url;
   }
 }
 
-// Lightweight Amazon scrape (works na maioria dos casos)
-async function scrapeAmazonProduct(url) {
-  try {
-    const res = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-      },
-      timeout: 12_000
-    });
-    const $ = cheerio.load(res.data);
-
-    const title = $("#productTitle").text().trim() ||
-                  $("h1 span").first().text().trim() ||
-                  $("title").text().trim() ||
-                  "Produto Amazon";
-
-    let price = $("#priceblock_ourprice").text().trim() ||
-                $("#priceblock_dealprice").text().trim() ||
-                $("span.a-price > span.a-offscreen").first().text().trim() ||
-                $('[data-asin-price]').attr('data-asin-price') ||
-                "";
-
-    price = price ? price.replace(/\s+/g, " ").trim() : "Preço indisponível";
-
-    // imagem (opcional)
-    let image = $("#imgTagWrapperId img").attr("data-old-hires") ||
-                $("#imgTagWrapperId img").attr("src") ||
-                $("img#landingImage").attr("src") || "";
-
-    return {
-      title,
-      price,
-      image,
-      url: toAmazonAffiliate(url)
-    };
-  } catch (err) {
-    throw new Error("Falha ao raspar Amazon: " + (err.message || err));
-  }
-}
-
-// Generic HTML scrape fallback (tenta extrair title/first image)
-async function scrapeGeneric(url) {
+// ------------------ RASPAGEM LEVE AMAZON (tenta, mas se falhar usa seu texto) ------------------
+async function scrapeAmazon(url) {
   try {
     const res = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-      timeout: 10_000
+      timeout: 12_000
     });
     const $ = cheerio.load(res.data);
-    const title = $("meta[property='og:title']").attr("content") ||
-                  $("meta[name='twitter:title']").attr("content") ||
-                  $("title").text().trim() ||
-                  "Produto";
-    const image = $("meta[property='og:image']").attr("content") ||
-                  $("img").first().attr("src") || "";
-    return { title, price: "Preço indisponível", image, url };
+    const title = $("#productTitle").text().trim() ||
+                  $("h1 span").first().text().trim() ||
+                  $("meta[property='og:title']").attr("content") ||
+                  $("title").text().trim() || null;
+    let price = $("#priceblock_ourprice").text().trim() ||
+                $("#priceblock_dealprice").text().trim() ||
+                $("span.a-price > span.a-offscreen").first().text().trim() || null;
+    price = price ? price.replace(/\s+/g," ").trim() : null;
+    const image = $("#imgTagWrapperId img").attr("data-old-hires") ||
+                  $("#imgTagWrapperId img").attr("src") ||
+                  $("meta[property='og:image']").attr("content") || null;
+    return { title, price, image };
   } catch (e) {
-    throw new Error("Falha ao raspar página: " + (e.message || e));
+    return { title: null, price: null, image: null };
   }
 }
 
-// Builds a Markdown message (escape brackets in title)
-function buildMessage({ title, price, url, image, source = "Link" }) {
-  const esc = txt => (txt || "").replace(/([\[\]\(\)\*_\`\-])/g, "\\$1");
-  let msg = `🔥 *Oferta encontrada* 🔥\n\n*${esc(title)}*\n${price ? `💰 ${esc(price)}\n` : ""}\n🛒 [Comprar aqui](${url})\n\n🔗 Fonte: ${source}\n`;
-  if (image) msg += `\n`; // preview will show image automatically
-  msg += `\n_Tag: ${AFFILIATE_TAG}_`;
-  return msg;
+// ------------------ BUILD MESSAGE (template profissional + escassez) ------------------
+function buildMessage({ userText, url, scraped, nicho }) {
+  const frase = pickPhrase(nicho);
+  const titlePart = scraped.title ? `*${scraped.title}*` : (userText ? `*${userText.split("\n")[0]}*` : "");
+  const pricePart = scraped.price ? `\n💰 ${scraped.price}` : "";
+  const imgPreview = scraped.image ? scraped.image : null;
+  const affiliate = toAffiliate(url);
+
+  const header = `${frase}\n\nFLASH OFERTA!! APROVEITAAA! 🔥🔥🔥\n\n`;
+  const body = `${titlePart}\n\n${userText ? userText.replace(/\n+/g, "\n") + "\n\n" : ""}${pricePart}\n\n🛒 Comprar agora:\n👉 ${affiliate}\n\n#Oferta #Desconto #Promoção`;
+  return { text: header + body, image: imgPreview };
 }
 
-// Postar no canal (usa parse_mode Markdown e permite preview)
-async function postOfferToChannel(payload) {
-  const dedupeKey = payload.url || payload.title;
-  if (hasDedupe(dedupeKey)) {
-    console.log("Oferta duplicada detectada, ignorando:", dedupeKey);
-    return false;
+// ------------------ POSTAGEM: envia texto + opcionalmente imagem (se disponível) ------------------
+async function postOffer({msg, userText, url, forcedNicho}) {
+  const key = url || userText.split("\n")[0];
+  if (isPosted(key)) {
+    await bot.sendMessage(msg.chat.id, "ℹ️ Oferta já publicada recentemente (dedupe).");
+    return;
   }
-  addDedupe(dedupeKey);
 
-  const opts = { parse_mode: "Markdown", disable_web_page_preview: false };
-  await bot.sendMessage(channelId, buildMessage(payload), opts);
-  console.log("Oferta postada:", payload.title || payload.url);
-  return true;
+  const detected = detectNicho((userText || "") + " " + (url || ""));
+  const nicho = forcedNicho || detected || "general";
+
+  // tenta enriquecer se for Amazon
+  let scraped = { title: null, price: null, image: null };
+  if (url && url.includes("amazon.")) {
+    scraped = await scrapeAmazon(url);
+  }
+
+  const payload = buildMessage({ userText, url, scraped, nicho });
+  // enviar com imagem se disponível (envia como mensagem comum com preview)
+  try {
+    if (payload.image) {
+      // manda como texto com preview (telegram normalmente faz preview)
+      await bot.sendMessage(channelId, payload.text, { parse_mode: "Markdown", disable_web_page_preview: false });
+    } else {
+      await bot.sendMessage(channelId, payload.text, { parse_mode: "Markdown", disable_web_page_preview: false });
+    }
+    markPosted(key);
+    await bot.sendMessage(msg.chat.id, "✔️ Oferta publicada no canal!");
+  } catch (err) {
+    console.error("Erro ao postar oferta:", err);
+    await bot.sendMessage(msg.chat.id, "❌ Erro ao postar oferta: " + (err.message || err));
+  }
 }
 
-// ADMIN check helper
-function isAdmin(userId) {
-  if (!ADMIN_IDS.length) return true; // sem ADMIN_IDS -> todos administram
-  return ADMIN_IDS.includes(String(userId));
-}
-
-// COMMANDS
-
+// ------------------ HELP & USO ------------------
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id,
-    "Bot ativo! 🚀\nUse /oferta <url> para raspar e postar uma oferta.\nComandos administrativos: /runlist /status");
+    "Bot ativo! 🚀\nComo usar:\n\n" +
+    "1) /oferta <nicho>?  - inicia modo de envio (ex: /oferta ou /oferta beleza)\n" +
+    "   Depois responda com 2-4 linhas e inclua o link na última linha.\n\n" +
+    "Comandos: /status /runlist (admins) /help",
+    { parse_mode: "Markdown" }
+  );
 });
 
-// /oferta <url>  -> raspa e posta (apenas admins se ADMIN_IDS configurado)
-bot.onText(/\/oferta (.+)/, async (msg, match) => {
-  const fromId = msg.from.id;
-  if (!isAdmin(fromId)) return bot.sendMessage(msg.chat.id, "❌ Você não tem permissão para usar este comando.");
+bot.onText(/\/help/, (msg) => {
+  bot.sendMessage(msg.chat.id,
+    "Formato de envio:\nLinha1: Título curto\nLinha2: Descrição ou preço antigo\nLinha3: Preço atual / info\nLinha4: Link de afiliado (amzn.to ou amazon link)\n\nEx:\nOFERTA FLASH\nDe R$499\nPor R$289\nhttps://amzn.to/xxxxx",
+    { parse_mode: "Markdown" }
+  );
+});
 
-  const rawUrl = (match && match[1]) ? match[1].trim() : null;
-  if (!rawUrl) return bot.sendMessage(msg.chat.id, "❌ Uso: /oferta <url>");
+// comando /oferta [nicho]
+bot.onText(/\/oferta(?:\s+(\w+))?/, async (msg, match) => {
+  const forced = match && match[1] ? match[1].toLowerCase() : null;
+  await bot.sendMessage(msg.chat.id, "Responda esta mensagem com a oferta (última linha = link).");
+  // guardaremos no handler on message usando reply_to_message
+  // payload inclui forced niche, que passaremos pelo reply_to relationship
+  // armazenamos temporariamente o forced nicho em map (chatId -> forced)
+  bot.pendingOffer = bot.pendingOffer || {};
+  bot.pendingOffer[msg.chat.id] = { forcedNicho: forced };
+});
 
-  try {
-    await bot.sendMessage(msg.chat.id, "🔎 Processando link, aguarde...");
-    let info;
-    if (rawUrl.includes("amazon.")) {
-      info = await scrapeAmazonProduct(rawUrl);
-      info.source = "Amazon";
-    } else {
-      info = await scrapeGeneric(rawUrl);
-      info.url = toAmazonAffiliate(rawUrl); // se não for Amazon, toAmazonAffiliate só retorna original
-      info.source = "Página";
-    }
-    const posted = await postOfferToChannel(info);
-    if (posted) await bot.sendMessage(msg.chat.id, "✔️ Oferta publicada no canal!");
-    else await bot.sendMessage(msg.chat.id, "ℹ️ Oferta já publicada recentemente (dedupe).");
-  } catch (err) {
-    console.error("Erro /oferta:", err.message || err);
-    await bot.sendMessage(msg.chat.id, "❌ Erro ao processar o link: " + (err.message || err));
+// quando usuário responde ao prompt do /oferta
+bot.on("message", async (msg) => {
+  if (!msg.reply_to_message) return;
+  if (!msg.reply_to_message.text) return;
+  if (!msg.reply_to_message.text.includes("Responda esta mensagem com a oferta")) return;
+
+  const chatId = msg.chat.id;
+  const pending = (bot.pendingOffer && bot.pendingOffer[chatId]) ? bot.pendingOffer[chatId] : {};
+  delete bot.pendingOffer[chatId];
+
+  const full = msg.text.trim();
+  const lines = full.split("\n").map(l => l.trim()).filter(Boolean);
+  if (lines.length < 1) {
+    return bot.sendMessage(chatId, "❌ Formato inválido. Coloque pelo menos o texto e o link na última linha.");
   }
+  const link = lines[lines.length - 1];
+  const userText = lines.slice(0, lines.length - 1).join("\n");
+  // valida link simples
+  if (!link.startsWith("http")) {
+    return bot.sendMessage(chatId, "❌ Link inválido. A última linha deve ser o link (https...).");
+  }
+  // permissões: se ADMIN_IDS configurado, checamos
+  const fromId = String(msg.from.id);
+  if (ADMIN_IDS.length && !ADMIN_IDS.includes(fromId)) {
+    return bot.sendMessage(chatId, "❌ Você não tem permissão para publicar ofertas.");
+  }
+
+  await postOffer({ msg, userText, url: link, forcedNicho: pending.forcedNicho });
 });
 
-// /runlist -> processa LIST_URLS (apenas admins)
-bot.onText(/\/runlist/, async (msg) => {
-  const fromId = msg.from.id;
-  if (!isAdmin(fromId)) return bot.sendMessage(msg.chat.id, "❌ Você não tem permissão para usar este comando.");
-  if (!LIST_URLS.length) return bot.sendMessage(msg.chat.id, "⚠️ LIST_URLS não configurada.");
+// status
+bot.onText(/\/status/, (msg) => {
+  bot.sendMessage(msg.chat.id, `Bot online.\nLIST_URLS: ${LIST_URLS.length}\nDedupe(TTL h): ${DEDUPE_TTL/3600000}`);
+});
 
-  await bot.sendMessage(msg.chat.id, "🔁 Iniciando processamento da lista de URLs...");
+// optional: run manual list (admins)
+bot.onText(/\/runlist/, async (msg) => {
+  const fromId = String(msg.from.id);
+  if (ADMIN_IDS.length && !ADMIN_IDS.includes(fromId)) {
+    return bot.sendMessage(msg.chat.id, "❌ Você não tem permissão.");
+  }
+  if (!LIST_URLS.length) return bot.sendMessage(msg.chat.id, "⚠️ LIST_URLS vazia.");
+  await bot.sendMessage(msg.chat.id, "🔁 Iniciando processamento da lista...");
   for (const u of LIST_URLS) {
     try {
-      if (!u) continue;
-      let info;
-      if (u.includes("amazon.")) {
-        info = await scrapeAmazonProduct(u);
-        info.source = "Amazon (lista)";
-      } else {
-        info = await scrapeGeneric(u);
-        info.url = toAmazonAffiliate(u);
-        info.source = "Página (lista)";
-      }
-      await postOfferToChannel(info);
-      // delay curto para não floodar
-      await new Promise(r => setTimeout(r, 1200));
+      const userText = ""; // sem texto do usuário
+      const link = u;
+      await postOffer({ msg, userText, url: link });
+      await new Promise(r => setTimeout(r, 1400));
     } catch (e) {
-      console.warn("Erro ao processar URL da lista:", u, e.message || e);
+      console.warn("erro runlist:", e.message || e);
     }
   }
-  await bot.sendMessage(msg.chat.id, "✔️ Processamento da lista concluído.");
+  await bot.sendMessage(msg.chat.id, "✔️ Processamento finalizado.");
 });
 
-// /status
-bot.onText(/\/status/, (msg) => {
-  bot.sendMessage(msg.chat.id, `Bot online.\nLIST_URLS: ${LIST_URLS.length}\nSched: ${SCHEDULE_CRON}`);
-});
-
-// Optional scheduler: roda LIST_URLS automaticamente se definido
+// scheduler (apenas ativa se LIST_URLS tiver itens)
 if (LIST_URLS.length) {
   schedule.scheduleJob(SCHEDULE_CRON, async () => {
     console.log(`[${new Date().toISOString()}] Scheduler: processando LIST_URLS...`);
     for (const u of LIST_URLS) {
       try {
-        let info;
-        if (u.includes("amazon.")) {
-          info = await scrapeAmazonProduct(u);
-          info.source = "Amazon (scheduler)";
-        } else {
-          info = await scrapeGeneric(u);
-          info.url = toAmazonAffiliate(u);
-          info.source = "Página (scheduler)";
-        }
-        await postOfferToChannel(info);
-        await new Promise(r => setTimeout(r, 1200));
+        await postOffer({ msg: { chat: { id: channelId }, from: { id: "scheduler" } }, userText: "", url: u });
+        await new Promise(r => setTimeout(r, 1400));
       } catch (e) {
-        console.warn("Scheduler error for URL:", u, e.message || e);
+        console.warn("scheduler erro:", e.message || e);
       }
     }
   });
