@@ -1,6 +1,16 @@
 /**
- * index.js
- * Versão final - estilo B (agressivo), env: BOT_TOKEN, RAINFOREST_API_KEY, CHANNEL_ID, AFFILIATE_TAG (opcional)
+ * index.js - Versão PREMIUM
+ * - Exibe preço antigo riscado
+ * - %OFF em destaque
+ * - Chamada por nicho (variações inteligentes estilo B)
+ * - Frase emocional por nicho
+ * - Envia para usuário e canal
+ * - /ultimas para histórico
+ *
+ * Variáveis de ambiente necessárias:
+ * BOT_TOKEN, RAINFOREST_API_KEY, CHANNEL_ID, AFFILIATE_TAG (opcional)
+ *
+ * Fallback image (arquivo uploadado): /mnt/data/Captura de tela 2025-11-20 143447.png
  */
 
 import express from "express";
@@ -8,22 +18,21 @@ import axios from "axios";
 import NodeCache from "node-cache";
 import { Telegraf, Markup } from "telegraf";
 
-// CONFIGURAÇÕES
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const app = express();
-const cache = new NodeCache({ stdTTL: 60 * 5 }); // cache 5 minutos
-
+const cache = new NodeCache({ stdTTL: 60 * 5 });
 const RAINFOREST_KEY = process.env.RAINFOREST_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const AFFILIATE_TAG = process.env.AFFILIATE_TAG || "";
-
-// Fallback image (arquivo que você enviou para testes locais)
 const FALLBACK_IMAGE = "/mnt/data/Captura de tela 2025-11-20 143447.png";
 
-// Helpers ---------------------------------------------------
+// Histórico em memória (últimas ofertas)
+const history = [];
+
+// ---------- Helpers ----------
 function safeNumber(v) {
-  if (!v && v !== 0) return null;
-  const n = Number(v);
+  if (v == null) return null;
+  const n = Number(String(v).replace(/[^\d.-]/g, ""));
   return isNaN(n) ? null : n;
 }
 function currencyBR(value) {
@@ -32,12 +41,10 @@ function currencyBR(value) {
 }
 function makeAffiliateLink(originalUrl) {
   if (!AFFILIATE_TAG) return originalUrl;
-  // se já contém amzn.to ou tag, retorna original (simplificação)
-  if (originalUrl.includes("tag=") || originalUrl.includes("aff=")) return originalUrl;
-  // adiciona parâmetro tag ao fim (forma simples)
   try {
     const u = new URL(originalUrl);
-    u.searchParams.set("tag", AFFILIATE_TAG);
+    // Amazon usa 'tag' como parâmetro de afiliado (simplificação)
+    if (!u.searchParams.get("tag")) u.searchParams.set("tag", AFFILIATE_TAG);
     return u.toString();
   } catch (e) {
     return originalUrl;
@@ -48,15 +55,13 @@ function makeAffiliateLink(originalUrl) {
 async function resolveAmazonLink(url) {
   try {
     const r = await axios.get(url, { maxRedirects: 5, timeout: 10000 });
-    if (r.request?.res?.responseUrl) return r.request.res.responseUrl;
-    return url;
+    return r.request?.res?.responseUrl || url;
   } catch (e) {
-    // fallback: retornar original
     return url;
   }
 }
 
-// Pega dados da Rainforest
+// Pega dados Rainforest (com cache)
 async function getAmazonData(productUrl) {
   const cacheKey = `rf:${productUrl}`;
   const cached = cache.get(cacheKey);
@@ -72,37 +77,30 @@ async function getAmazonData(productUrl) {
   });
 
   const product = resp.data?.product || null;
-  if (!product) throw new Error("Produto não encontrado na API Rainforest");
-
+  if (!product) throw new Error("Produto não retornado pela Rainforest");
   cache.set(cacheKey, product);
   return product;
 }
 
-// Detecta nicho simples a partir do título / categories
+// Detecta nicho
 function detectNiche(product) {
   const title = (product.title || "").toLowerCase();
   const cats = (product.categories || []).join(" ").toLowerCase();
-
   const text = `${title} ${cats}`;
 
   const mapping = [
-    { name: "bebidas", keywords: ["whisky", "vodka", "cerveja", "vinho", "bebida"] },
-    { name: "eletronicos", keywords: ["fone", "notebook", "celular", "tablet", "tv", "eletrônico", "smart"] },
-    { name: "beleza", keywords: ["creme", "perfume", "maquiagem", "cabelo", "beleza"] },
-    { name: "cozinha", keywords: ["panela", "liquidificador", "cafeteira", "cozinha"] },
-    { name: "games", keywords: ["jogo", "console", "nintendo", "playstation", "xbox", "gamer"] },
-    { name: "pets", keywords: ["ração", "pet", "gato", "cachorro"] },
+    { name: "bebidas", keywords: ["whisky","vodka","cerveja","vinho","bebida","whiskey","ron"] },
+    { name: "eletronicos", keywords: ["fone","notebook","celular","tablet","tv","smart","headphone","ssd"] },
+    { name: "beleza", keywords: ["creme","perfume","maquiagem","cabelo","beleza"] },
+    { name: "cozinha", keywords: ["panela","cafeteira","liquidificador","cozinha","prato"] },
+    { name: "games", keywords: ["jogo","console","playstation","xbox","nintendo","gamer"] },
+    { name: "pets", keywords: ["ração","pet","gato","cachorro","shampoo pet"] }
   ];
-
-  for (const m of mapping) {
-    for (const kw of m.keywords) {
-      if (text.includes(kw)) return m.name;
-    }
-  }
+  for (const m of mapping) for (const kw of m.keywords) if (text.includes(kw)) return m.name;
   return "geral";
 }
 
-// Gera variações agressivas coerentes com nicho (estilo B)
+// Headline por nicho (variações)
 function buildHeadline(niche) {
   const pool = {
     bebidas: ["🔥 PRA FAZER ESTOQUE!!!", "🥃 ACHADO QUENTE!"],
@@ -113,92 +111,105 @@ function buildHeadline(niche) {
     pets: ["🐾 MEGA PROMO PET!", "🔥 OFERTA PARA SEU PET!"],
     geral: ["🔥 PREÇO ESTOURADO!!!", "⚡ OFERTA RELÂMPAGO!"]
   };
-  const arr = pool[niche] || pool["geral"];
-  // escolhe aleatório
-  return arr[Math.floor(Math.random() * arr.length)];
+  const arr = pool[niche] || pool.geral;
+  return arr[Math.floor(Math.random()*arr.length)];
 }
 
-// Gera frase de escassez baseada no desconto
+// Frase emocional curta por nicho
+function emotionalLine(niche) {
+  const pool = {
+    bebidas: ["Um dos rótulos mais procurados — perfeito pra presentear ou estoque!"],
+    eletronicos: ["Upgrade certeiro — ótimo custo-benefício pra quem precisa agora."],
+    beleza: ["Produto com avaliação alta — garanta o seu antes que acabe."],
+    cozinha: ["Peça que facilita sua rotina na cozinha — preço raro."],
+    games: ["Ótima adição pra sua setup/game nights."],
+    pets: ["Seu pet merece — oferta perfeita para manter estoque."],
+    geral: ["Aproveite enquanto o preço está assim — pode subir a qualquer momento."]
+  };
+  return pool[niche] || pool.geral;
+}
+
+// Scarcity line
 function buildScarcity(discountPercent) {
   const base = [
     "⏳ Pode subir a qualquer momento!",
     "⚠️ Estoque limitado!",
-    "🚨 Oferta por tempo limitado!",
-    "📉 Preço reduzido por tempo limitado!"
+    "🚨 Oferta por tempo limitado!"
   ];
-  if (discountPercent >= 30) {
-    base.unshift("🔥 Preço MUITO abaixo da média!");
-  }
-  return base[Math.floor(Math.random() * base.length)];
+  if (discountPercent >= 30) base.unshift("🔥 Preço MUITO abaixo da média!");
+  return base[Math.floor(Math.random()*base.length)];
 }
 
-// Gera o texto final do post
+// Tenta obter preços antigos / atuais com segurança
+function extractPrices(product) {
+  const buybox = product.buybox_winner || {};
+  const priceObj = buybox.price || {};
+  // current
+  const current = safeNumber(priceObj.value) || null;
+
+  // attempts to get old price
+  let oldPrice = null;
+  if (priceObj.raw_old_price) {
+    const digits = String(priceObj.raw_old_price).replace(/[^\d,.-]/g, "").replace(",",".");
+    oldPrice = safeNumber(digits);
+  }
+  // fallback: offers array
+  if (!oldPrice && product.offers && product.offers.length) {
+    const o = product.offers[0];
+    if (o.price && o.price.previous_price) oldPrice = safeNumber(o.price.previous_price);
+  }
+  // final fallback: estimated from price_history or null
+  return { current, oldPrice };
+}
+
+// Gera texto final (Markdown compatível com Telegram)
 function gerarTextoPromocional(produto, linkAfiliado) {
   const titulo = produto.title || "Produto Amazon";
-  const buybox = produto.buybox_winner || {};
-  const priceObj = buybox.price || {};
-  const currentRaw = safeNumber(priceObj.value);
-  // a Rainforest pode retornar raw_old_price ou similar. tentamos detectar.
-  let oldPriceRaw = null;
-  if (priceObj.raw_old_price) {
-    // pode vir como string "R$ 199,90"
-    const digits = priceObj.raw_old_price.replace(/[^\d,.-]/g, "").replace(",", ".");
-    oldPriceRaw = safeNumber(digits);
-  } else if (produto.offers && produto.offers[0] && produto.offers[0].price) {
-    oldPriceRaw = safeNumber(produto.offers[0].price.previous_price);
-  }
-
-  const current = currentRaw;
-  const oldPrice = oldPriceRaw;
+  const { current, oldPrice } = extractPrices(produto);
   let discountPercent = 0;
-  if (oldPrice && current) {
-    discountPercent = Math.round(((oldPrice - current) / oldPrice) * 100);
-  }
+  if (oldPrice && current) discountPercent = Math.round(((oldPrice - current)/oldPrice)*100);
 
   const niche = detectNiche(produto);
   const headline = buildHeadline(niche);
+  const emotional = emotionalLine(niche);
   const scarcity = buildScarcity(discountPercent);
-  const isPrime = !!(produto.isPrime || (buybox && buybox.is_prime));
-  const primeLabel = isPrime ? "🚚 Frete GRÁTIS Prime" : "";
+  const isPrime = !!(produto.isPrime || (produto.buybox_winner && produto.buybox_winner.is_prime));
 
-  // Texto compacto e agressivo (estilo B)
-  const parts = [];
-  parts.push(`${headline}`);
-  parts.push(`*${titulo}*`);
-  if (oldPrice) parts.push(`❌ DE: *${currencyBR(oldPrice)}*`);
-  if (current) parts.push(`🔥 POR: *${currencyBR(current)}*`);
-  if (discountPercent > 0) parts.push(`🟢 *${discountPercent}% OFF AGORA!*`);
-  if (primeLabel) parts.push(`${primeLabel}`);
-  parts.push(`${scarcity}`);
-  parts.push(`\n🛒 *Compre com Desconto:*`);
-  parts.push(`${linkAfiliado}`);
-  parts.push(`\n📦 Envio rápido | Produto Amazon`);
+  // Monta texto com Markdown — riscado usa ~texto~
+  const lines = [];
+  lines.push(`${headline}`);
+  lines.push(`*${titulo}*`);
+  if (oldPrice) lines.push(`~❌ DE: ${currencyBR(oldPrice)}~`); // riscado
+  if (current) lines.push(`🔥 *POR: ${currencyBR(current)}*`);
+  if (discountPercent > 0) lines.push(`🟢 *${discountPercent}% OFF AGORA!*`);
+  if (isPrime) lines.push(`🚚 *Frete GRÁTIS Prime*`);
+  lines.push(`\n${emotional}`);
+  lines.push(`${scarcity}`);
+  lines.push(`\n🛒 *Compre com Desconto:*`);
+  lines.push(`${linkAfiliado}`);
+  lines.push(`\n📦 Envio rápido | Produto Amazon`);
 
   return {
-    text: parts.join("\n"),
+    text: lines.join("\n"),
     image: (produto.images && produto.images[0] && produto.images[0].link) || null,
     niche,
     discountPercent
   };
 }
 
-// Envia mensagem para chat e canal
+// Envia para usuário e para o canal. Salva no histórico.
 async function sendToUserAndChannel(ctxOrChatId, produtoData, originalLink) {
   const linkAf = makeAffiliateLink(originalLink);
   const built = gerarTextoPromocional(produtoData, linkAf);
   const caption = built.text;
   const imageUrl = built.image || null;
-  const inlineKeyboard = Markup.inlineKeyboard([
-    Markup.button.url("🛒 COMPRAR AGORA", linkAf)
-  ]);
+  const inlineKeyboard = Markup.inlineKeyboard([ Markup.button.url("🛒 COMPRAR AGORA", linkAf) ]);
 
-  // Mensagem para quem solicitou
+  // Envia para solicitante
   try {
     if (typeof ctxOrChatId === "object" && ctxOrChatId.replyWithPhoto) {
-      if (imageUrl) {
-        await ctxOrChatId.replyWithPhoto({ url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
-      } else {
-        // fallback para imagem local se estiver testando localmente
+      if (imageUrl) await ctxOrChatId.replyWithPhoto({ url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
+      else {
         try {
           await ctxOrChatId.replyWithPhoto({ url: FALLBACK_IMAGE }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
         } catch (e) {
@@ -206,30 +217,43 @@ async function sendToUserAndChannel(ctxOrChatId, produtoData, originalLink) {
         }
       }
     } else {
-      // chat id
-      if (imageUrl) {
-        await bot.telegram.sendPhoto(ctxOrChatId, { url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
-      } else {
-        await bot.telegram.sendMessage(ctxOrChatId, caption, { parse_mode: "Markdown", ...inlineKeyboard });
-      }
+      if (imageUrl) await bot.telegram.sendPhoto(ctxOrChatId, { url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
+      else await bot.telegram.sendMessage(ctxOrChatId, caption, { parse_mode: "Markdown", ...inlineKeyboard });
     }
   } catch (e) {
-    console.error("Erro ao enviar para usuário:", e.message || e);
+    console.error("Erro ao enviar para solicitante:", e?.message || e);
   }
 
-  // Envia para canal (se configurado)
+  // Envia para canal
   if (CHANNEL_ID) {
     try {
-      if (imageUrl) {
-        await bot.telegram.sendPhoto(CHANNEL_ID, { url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
-      } else {
-        await bot.telegram.sendMessage(CHANNEL_ID, caption, { parse_mode: "Markdown", ...inlineKeyboard });
-      }
+      if (imageUrl) await bot.telegram.sendPhoto(CHANNEL_ID, { url: imageUrl }, { caption, parse_mode: "Markdown", ...inlineKeyboard });
+      else await bot.telegram.sendMessage(CHANNEL_ID, caption, { parse_mode: "Markdown", ...inlineKeyboard });
     } catch (e) {
-      console.error("Erro ao enviar para canal:", e.message || e);
+      console.error("Erro ao enviar para canal:", e?.message || e);
     }
   }
+
+  // Salva histórico (mantém até 50 itens)
+  try {
+    const item = {
+      title: produtoData.title || "Produto",
+      link: linkAf,
+      price: produtoData.buybox_winner?.price?.value || null,
+      time: new Date().toISOString()
+    };
+    history.unshift(item);
+    if (history.length > 50) history.pop();
+  } catch (e) { /* ignore */ }
 }
+
+// Comando /ultimas
+bot.command("ultimas", async (ctx) => {
+  if (!history.length) return ctx.reply("Nenhuma oferta registrada ainda.");
+  const top = history.slice(0,10);
+  const lines = top.map((h, i) => `${i+1}. ${h.title}\n${h.link}\n— ${h.time}`).join("\n\n");
+  await ctx.reply(`Últimas ofertas:\n\n${lines}`);
+});
 
 // Listener principal
 bot.on("text", async (ctx) => {
@@ -238,25 +262,22 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Envie um link da Amazon (amzn.to ou amazon) para gerar oferta automática 🔥");
   }
 
-  await ctx.reply("⏳ Processando oferta no estilo B (impactante) — um segundo...");
+  await ctx.reply("⏳ Processando oferta PREMIUM — aguarda um segundo...");
 
   try {
     const realLink = await resolveAmazonLink(msg);
     const product = await getAmazonData(realLink);
-
     await sendToUserAndChannel(ctx, product, msg);
   } catch (err) {
-    console.error("Erro processamento:", err?.message || err);
-    await ctx.reply("❌ Não foi possível gerar a oferta. Tenta enviar o link novamente ou me manda o log.");
+    console.error("Erro no processamento:", err?.message || err);
+    await ctx.reply("❌ Não foi possível gerar a oferta. Tenta enviar o link novamente.");
   }
 });
 
-// Healthcheck e start express
-app.get("/", (_, res) => res.send("OK - telegram promo bot"));
+// Healthcheck e start
+app.get("/", (_, res) => res.send("OK - telegram promo bot (premium)"));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
-
-// Start bot
-bot.launch().then(() => console.log("Bot rodando"));
+bot.launch().then(() => console.log("Bot rodando (premium)"));
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
