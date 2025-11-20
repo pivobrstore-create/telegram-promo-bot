@@ -1,6 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
 import axios from "axios";
-import cheerio from "cheerio";
+import * as cheerio from "cheerio";
 import schedule from "node-schedule";
 
 /**
