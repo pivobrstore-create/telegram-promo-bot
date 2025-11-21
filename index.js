@@ -1,30 +1,23 @@
 // ==============================
-// index.js - BOT PROFISSIONAL
-// PADRÃO DE POST SOLICITADO
+// index.js - BOT PREMIUM PROFISSIONAL
+// FORMATO EXATO SOLICITADO PELO CLIENTE
 // ==============================
 
 import express from "express";
 import axios from "axios";
 import { Telegraf, Markup } from "telegraf";
 
-// ==============================
-// VARIÁVEIS DE AMBIENTE
-// ==============================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const RAINFOREST_API_KEY = process.env.RAINFOREST_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 
 if (!BOT_TOKEN || !RAINFOREST_API_KEY || !CHANNEL_ID) {
-  console.error("❌ Variáveis de ambiente não configuradas");
+  console.error("❌ Configure BOT_TOKEN, RAINFOREST_API_KEY e CHANNEL_ID");
   process.exit(1);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
-
-// ==============================
-// FUNÇÕES AUXILIARES
-// ==============================
 
 async function expandLink(url) {
   try {
@@ -35,125 +28,101 @@ async function expandLink(url) {
   }
 }
 
-function formatCurrency(value) {
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+function brl(v) {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-async function getProductData(url) {
-  const response = await axios.get("https://api.rainforestapi.com/request", {
-    params: {
-      api_key: RAINFOREST_API_KEY,
-      type: "product",
-      url: url
-    }
+async function getProduct(link) {
+  const r = await axios.get('https://api.rainforestapi.com/request', {
+    params: { api_key: RAINFOREST_API_KEY, type: 'product', url: link }
   });
-
-  return response.data.product;
+  return r.data.product;
 }
 
-function calcularDesconto(precoAntigo, precoAtual) {
-  if (!precoAntigo || !precoAtual) return 0;
-  return Math.round(((precoAntigo - precoAtual) / precoAntigo) * 100);
+function calcPercent(oldPrice, newPrice) {
+  if (!oldPrice || !newPrice) return null;
+  return Math.round(((oldPrice - newPrice) / oldPrice) * 100);
 }
 
-function gerarPost(produto, link) {
-  const titulo = produto.title;
-  const imagem = produto.images?.[0]?.link || null;
+function buildPost(p, link) {
+  const title = p.title;
+  const image = p.images?.[0]?.link;
 
-  const precoAtual = produto.buybox_winner?.price?.value || null;
-  const precoAntigo = produto.buybox_winner?.price?.raw_old_price || null;
+  const atual = p.buybox_winner?.price?.value || 0;
+  const rawOld = p.buybox_winner?.price?.raw_old_price;
+  const antigo = rawOld ? parseFloat(rawOld.replace(/[R$ ]/g,'').replace(',','.')) : null;
+  const percent = calcPercent(antigo, atual);
 
-  const precoAntigoNumerico = precoAntigo
-    ? parseFloat(precoAntigo.replace(/[R$ ]/g, '').replace(',', '.'))
-    : null;
+  const texto = `🔥 PRA FAZER ESTOQUEEEE!! 🔥
 
-  const desconto = calcularDesconto(precoAntigoNumerico, precoAtual);
+` +
+`*${title}*
 
-  const texto = `🔥 PRA FAZER ESTOQUEEEE!! 🔥\n\n` +
-    `*${titulo}*\n\n` +
-    `${precoAntigoNumerico ? `❌ ${formatCurrency(precoAntigoNumerico)}` : ''}\n` +
-    `✅ ${formatCurrency(precoAtual)}\n` +
-    `${desconto ? `(${desconto}% OFF)` : ''}\n\n` +
-    `🚚 Frete grátis Prime\n` +
-    `⚠️ Pode subir a qualquer momento!\n\n` +
-    `Compre aqui:\n${link}`;
+` +
+(antigo ? `❌ ${brl(antigo)}
+` : '') +
+`✅ ${brl(atual)}
+` +
+(percent ? `(${percent}% OFF automático)
 
-  return { texto, imagem };
+` : '
+') +
+`🚚 Frete grátis Prime
+` +
+`⚠️ Pode subir a qualquer momento!
+
+` +
+`Compre aqui:
+${link}`;
+
+  return { texto, image };
 }
 
-// ==============================
-// BOT PRINCIPAL
-// ==============================
-
-bot.on("text", async (ctx) => {
+bot.on('text', async (ctx) => {
   const msg = ctx.message.text;
 
-  if (!msg.includes("amazon") && !msg.includes("amzn.to")) {
-    return ctx.reply("Envie um link da Amazon para gerar a oferta automática.");
+  if (!msg.includes('amazon') && !msg.includes('amzn.to')) {
+    return ctx.reply('Envie o link da Amazon para gerar a oferta automática.');
   }
 
   try {
-    const linkFinal = await expandLink(msg);
-    const produto = await getProductData(linkFinal);
+    const finalLink = await expandLink(msg);
+    const produto = await getProduct(finalLink);
 
-    const { texto, imagem } = gerarPost(produto, msg);
+    const { texto, image } = buildPost(produto, msg);
 
-    const botoes = Markup.inlineKeyboard([
-      Markup.button.url("🛒 COMPRAR AGORA", msg)
+    const keyboard = Markup.inlineKeyboard([
+      Markup.button.url('🛒 COMPRAR AGORA', msg)
     ]);
 
-    if (imagem) {
-      await bot.telegram.sendPhoto(ctx.chat.id, imagem, {
-        caption: texto,
-        parse_mode: "Markdown",
-        ...botoes
-      });
-
-      await bot.telegram.sendPhoto(CHANNEL_ID, imagem, {
-        caption: texto,
-        parse_mode: "Markdown",
-        ...botoes
-      });
+    if (image) {
+      await bot.telegram.sendPhoto(ctx.chat.id, image, { caption: texto, parse_mode: 'Markdown', ...keyboard });
+      await bot.telegram.sendPhoto(CHANNEL_ID, image, { caption: texto, parse_mode: 'Markdown', ...keyboard });
     } else {
-      await bot.telegram.sendMessage(ctx.chat.id, texto, {
-        parse_mode: "Markdown",
-        ...botoes
-      });
-
-      await bot.telegram.sendMessage(CHANNEL_ID, texto, {
-        parse_mode: "Markdown",
-        ...botoes
-      });
+      await bot.telegram.sendMessage(ctx.chat.id, texto, { parse_mode: 'Markdown', ...keyboard });
+      await bot.telegram.sendMessage(CHANNEL_ID, texto, { parse_mode: 'Markdown', ...keyboard });
     }
-
-  } catch (error) {
-    console.error(error);
-    ctx.reply("❌ Erro ao processar a oferta.");
+  } catch (e) {
+    console.error(e);
+    ctx.reply('❌ Falha ao gerar oferta.');
   }
 });
 
-// ==============================
-// SERVIDOR RENDER
-// ==============================
-app.get("/", (req, res) => res.send("BOT ONLINE ✅"));
+app.get('/', (_, res) => res.send('BOT PREMIUM ATIVO ✅'));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor ativo na porta ${PORT}`));
+app.listen(PORT, () => console.log('Servidor online...'));
 
 bot.launch();
 
-// ==============================
-// package.json
-// ==============================
-/*
+/* ==============================
+package.json
+==============================
 {
-  "name": "telegram-bot-promos",
-  "version": "1.0.0",
-  "description": "Bot Telegram Profissional de Ofertas Amazon",
-  "main": "index.js",
+  "name": "telegram-bot-premium",
+  "version": "2.0.0",
   "type": "module",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
   "dependencies": {
     "axios": "^1.6.7",
     "express": "^4.18.2",
