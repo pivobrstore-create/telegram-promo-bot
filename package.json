@@ -1,7 +1,6 @@
 {
-  "name": "telegram-promo-bot",
-  "version": "1.0.0",
-  "description": "Bot profissional de ofertas Amazon",
+  "name": "telegram-bot-premium",
+  "version": "2.0.0",
   "main": "index.js",
   "type": "module",
   "scripts": {
