@@ -1,24 +1,39 @@
 # =========================================
 # BOT TELEGRAM AMAZON - PYTHON PROFISSIONAL
-# PRONTO PARA RODAR NO RENDER ✅
+# VERSÃO DEFINITIVA – 100% AUTOMÁTICO ✅
+# COMPATÍVEL COM RENDER E python-telegram-bot v20+
 # =========================================
 
-# ✅ COMO USAR:
-# 1. Crie um arquivo chamado: bot.py
-# 2. Crie um arquivo chamado: requirements.txt
-# 3. Configure as variáveis no Render (Environment Variables):
-#    BOT_TOKEN = token do BotFather
-#    CHANNEL_ID = id do seu canal (ex: -1001234567890)
-#
-# ✅ Start Command no Render:
-# python bot.py
+"""
+✅ OBJETIVO ORIGINAL CONFIRMADO
+Você só envia o LINK DA AMAZON com seu afiliado
+O BOT faz TODO o resto:
+- Pega título
+- Pega preço atual
+- Pega preço antigo
+- Calcula % OFF
+- Busca imagem melhor no Google
+- Publica no canal automaticamente
+
+FORMATO:
+🔥 PRA FAZER ESTOQUEEEE!! 🔥
+Produto
+❌ Preço antigo
+✅ Preço atual (%OFF)
+... etc
+"""
 
 # ================================
-# requirements.txt (conteúdo)
+# ARQUIVOS NECESSÁRIOS
 # ================================
+# bot.py  (este código)
+# requirements.txt com:
 # python-telegram-bot==20.7
 # requests
 # beautifulsoup4
+
+# Start Command no Render:
+# python bot.py
 
 import os
 import requests
@@ -26,69 +41,60 @@ from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-# 🔐 Variáveis de ambiente (SEGURAS)
+# ================================
+# VARIÁVEIS DO RENDER
+# ================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 if not BOT_TOKEN or not CHANNEL_ID:
-    raise Exception("Configure BOT_TOKEN e CHANNEL_ID nas variáveis do Render")
+    raise Exception("Defina BOT_TOKEN e CHANNEL_ID nas Environment Variables do Render")
 
-# =============================
-# BUSCAR IMAGEM PROFISSIONAL (GOOGLE)
-# =============================
+# ================================
+# FUNÇÕES CORE
+# ================================
 
-def get_google_image(query):
+def buscar_imagem_google(query):
     headers = {"User-Agent": "Mozilla/5.0"}
-    url = f"https://www.google.com/search?q={query}&tbm=isch"
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
-    img = soup.find("img")
+    r = requests.get(f"https://www.google.com/search?q={query}&tbm=isch", headers=headers)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    img = soup.select_one('img')
     return img['src'] if img else None
 
-# =============================
-# SCRAP AMAZON
-# =============================
 
-def get_amazon_data(url):
+def pegar_dados_amazon(url):
     headers = {"User-Agent": "Mozilla/5.0"}
     page = requests.get(url, headers=headers)
     soup = BeautifulSoup(page.text, 'html.parser')
 
-    title = soup.find(id='productTitle')
-    title = title.get_text(strip=True) if title else "Produto Amazon"
+    titulo = soup.find(id='productTitle')
+    titulo = titulo.get_text(strip=True) if titulo else "Produto Amazon"
 
-    price = soup.select_one('.a-price .a-offscreen')
-    price = float(price.text.replace('R$', '').replace('.', '').replace(',', '.')) if price else None
+    preco = soup.select_one('.a-price .a-offscreen')
+    preco = float(preco.text.replace('R$', '').replace('.', '').replace(',', '.')) if preco else None
 
-    old_price = soup.select_one('.a-text-price span')
-    old_price = float(old_price.text.replace('R$', '').replace('.', '').replace(',', '.')) if old_price else None
+    preco_antigo = soup.select_one('.a-text-price span')
+    preco_antigo = float(preco_antigo.text.replace('R$', '').replace('.', '').replace(',', '.')) if preco_antigo else None
 
-    return title, price, old_price
+    return titulo, preco, preco_antigo
 
-# =============================
-# CÁLCULO DESCONTO
-# =============================
 
-def calculate_discount(old, new):
-    if not old or not new:
+def calcular_desconto(antigo, atual):
+    if not antigo or not atual:
         return None
-    return round(((old - new) / old) * 100)
+    return round(((antigo - atual) / antigo) * 100)
 
-# =============================
-# FORMATAÇÃO FINAL (PADRÃO PROFISSIONAL)
-# =============================
 
-def format_post(title, price, old_price, discount, link):
-    texto = f"🔥 PRA FAZER ESTOQUEEEE!! 🔥\n\n"
-    texto += f"*{title}*\n\n"
+def montar_post(titulo, preco, preco_antigo, desconto, link):
+    texto = "🔥 PRA FAZER ESTOQUEEEE!! 🔥\n\n"
+    texto += f"*{titulo}*\n\n"
 
-    if old_price:
-        texto += f"❌ R$ {old_price:.2f}\n"
-    if price:
-        texto += f"✅ R$ {price:.2f}\n"
-
-    if discount:
-        texto += f"({discount}% OFF automático)\n\n"
+    if preco_antigo:
+        texto += f"❌ R$ {preco_antigo:.2f}\n"
+    if preco:
+        texto += f"✅ R$ {preco:.2f}\n"
+    if desconto:
+        texto += f"({desconto}% OFF automático)\n\n"
 
     texto += "🚚 Frete grátis Prime\n"
     texto += "⚠️ Pode subir a qualquer momento!\n\n"
@@ -96,39 +102,39 @@ def format_post(title, price, old_price, discount, link):
 
     return texto
 
-# =============================
-# BOT HANDLER
-# =============================
+# ================================
+# HANDLER PRINCIPAL
+# ================================
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
+async def processar_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    link = update.message.text
 
-    if "amazon" not in url and "amzn.to" not in url:
-        await update.message.reply_text("Envie um link válido da Amazon.")
+    if "amazon" not in link and "amzn.to" not in link:
+        await update.message.reply_text("Envie apenas links da Amazon.")
         return
 
-    title, price, old_price = get_amazon_data(url)
-    discount = calculate_discount(old_price, price)
-    image = get_google_image(title)
-    caption = format_post(title, price, old_price, discount, url)
+    titulo, preco, preco_antigo = pegar_dados_amazon(link)
+    desconto = calcular_desconto(preco_antigo, preco)
+    imagem = buscar_imagem_google(titulo)
+    texto = montar_post(titulo, preco, preco_antigo, desconto, link)
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 COMPRAR AGORA", url=url)]
+    teclado = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 COMPRAR AGORA", url=link)]
     ])
 
-    if image:
-        await context.bot.send_photo(update.effective_chat.id, image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
-        await context.bot.send_photo(CHANNEL_ID, image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
+    if imagem:
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=imagem, caption=texto, parse_mode="Markdown", reply_markup=teclado)
+        await context.bot.send_photo(chat_id=CHANNEL_ID, photo=imagem, caption=texto, parse_mode="Markdown", reply_markup=teclado)
     else:
-        await context.bot.send_message(update.effective_chat.id, caption, parse_mode='Markdown', reply_markup=keyboard)
-        await context.bot.send_message(CHANNEL_ID, caption, parse_mode='Markdown', reply_markup=keyboard)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=texto, parse_mode="Markdown", reply_markup=teclado)
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=texto, parse_mode="Markdown", reply_markup=teclado)
 
-# =============================
+# ================================
 # INICIALIZAÇÃO
-# =============================
+# ================================
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_link))
 
-print("✅ BOT PYTHON PROFISSIONAL EM EXECUÇÃO")
+print("✅ BOT AUTOMÁTICO PROFISSIONAL ATIVO")
 app.run_polling()
