@@ -1,84 +1,134 @@
+# =========================================
+# BOT TELEGRAM AMAZON - PYTHON PROFISSIONAL
+# PRONTO PARA RODAR NO RENDER ✅
+# =========================================
+
+# ✅ COMO USAR:
+# 1. Crie um arquivo chamado: bot.py
+# 2. Crie um arquivo chamado: requirements.txt
+# 3. Configure as variáveis no Render (Environment Variables):
+#    BOT_TOKEN = token do BotFather
+#    CHANNEL_ID = id do seu canal (ex: -1001234567890)
+#
+# ✅ Start Command no Render:
+# python bot.py
+
+# ================================
+# requirements.txt (conteúdo)
+# ================================
+# python-telegram-bot==20.7
+# requests
+# beautifulsoup4
+
+import os
 import requests
 from bs4 import BeautifulSoup
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = "COLE_SEU_TOKEN_AQUI"
-CHANNEL_ID = -100XXXXXXXXXX  # ID do canal
+# 🔐 Variáveis de ambiente (SEGURAS)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-def pegar_dados_amazon(url):
+if not BOT_TOKEN or not CHANNEL_ID:
+    raise Exception("Configure BOT_TOKEN e CHANNEL_ID nas variáveis do Render")
+
+# =============================
+# BUSCAR IMAGEM PROFISSIONAL (GOOGLE)
+# =============================
+
+def get_google_image(query):
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    titulo = soup.find(id="productTitle")
-    titulo = titulo.get_text(strip=True) if titulo else "Produto Amazon"
-
-    preco = soup.select_one(".a-price .a-offscreen")
-    preco = float(preco.get_text().replace("R$", "").replace(",", ".").strip()) if preco else None
-
-    preco_antigo = soup.select_one(".a-text-price span")
-    preco_antigo = float(preco_antigo.get_text().replace("R$", "").replace(",", ".").strip()) if preco_antigo else None
-
-    return titulo, preco, preco_antigo
-
-def pegar_imagem_google(produto):
-    query = produto.replace(" ", "+")
     url = f"https://www.google.com/search?q={query}&tbm=isch"
-    headers = {"User-Agent": "Mozilla/5.0"}
     r = requests.get(url, headers=headers)
     soup = BeautifulSoup(r.text, "html.parser")
     img = soup.find("img")
-    return img["src"] if img else None
+    return img['src'] if img else None
 
-def desconto(a, b):
-    if not a or not b:
+# =============================
+# SCRAP AMAZON
+# =============================
+
+def get_amazon_data(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    page = requests.get(url, headers=headers)
+    soup = BeautifulSoup(page.text, 'html.parser')
+
+    title = soup.find(id='productTitle')
+    title = title.get_text(strip=True) if title else "Produto Amazon"
+
+    price = soup.select_one('.a-price .a-offscreen')
+    price = float(price.text.replace('R$', '').replace('.', '').replace(',', '.')) if price else None
+
+    old_price = soup.select_one('.a-text-price span')
+    old_price = float(old_price.text.replace('R$', '').replace('.', '').replace(',', '.')) if old_price else None
+
+    return title, price, old_price
+
+# =============================
+# CÁLCULO DESCONTO
+# =============================
+
+def calculate_discount(old, new):
+    if not old or not new:
         return None
-    return round(((a - b) / a) * 100)
+    return round(((old - new) / old) * 100)
 
-def montar_post(nome, preco, preco_antigo, perc, link):
-    return f"""
-🔥 PRA FAZER ESTOQUEEEE!! 🔥
+# =============================
+# FORMATAÇÃO FINAL (PADRÃO PROFISSIONAL)
+# =============================
 
-*{nome}*
+def format_post(title, price, old_price, discount, link):
+    texto = f"🔥 PRA FAZER ESTOQUEEEE!! 🔥\n\n"
+    texto += f"*{title}*\n\n"
 
-❌ R$ {preco_antigo if preco_antigo else ""}
-✅ R$ {preco}
-({perc}% OFF automático)
+    if old_price:
+        texto += f"❌ R$ {old_price:.2f}\n"
+    if price:
+        texto += f"✅ R$ {price:.2f}\n"
 
-🚚 Frete grátis Prime
-⚠️ Pode subir a qualquer momento!
+    if discount:
+        texto += f"({discount}% OFF automático)\n\n"
 
-Compre aqui:
-{link}
-"""
+    texto += "🚚 Frete grátis Prime\n"
+    texto += "⚠️ Pode subir a qualquer momento!\n\n"
+    texto += f"Compre aqui:\n{link}"
 
-async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    link = update.message.text
+    return texto
 
-    if "amazon" not in link and "amzn.to" not in link:
-        await update.message.reply_text("Envie um link da Amazon.")
+# =============================
+# BOT HANDLER
+# =============================
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text
+
+    if "amazon" not in url and "amzn.to" not in url:
+        await update.message.reply_text("Envie um link válido da Amazon.")
         return
 
-    nome, preco, preco_antigo = pegar_dados_amazon(link)
-    img = pegar_imagem_google(nome)
-    perc = desconto(preco_antigo, preco)
+    title, price, old_price = get_amazon_data(url)
+    discount = calculate_discount(old_price, price)
+    image = get_google_image(title)
+    caption = format_post(title, price, old_price, discount, url)
 
-    msg = montar_post(nome, preco, preco_antigo, perc, link)
-
-    teclado = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 COMPRAR AGORA", url=link)]
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 COMPRAR AGORA", url=url)]
     ])
 
-    if img:
-        await context.bot.send_photo(update.effective_chat.id, img, caption=msg, parse_mode="Markdown", reply_markup=teclado)
-        await context.bot.send_photo(CHANNEL_ID, img, caption=msg, parse_mode="Markdown", reply_markup=teclado)
+    if image:
+        await context.bot.send_photo(update.effective_chat.id, image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
+        await context.bot.send_photo(CHANNEL_ID, image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
     else:
-        await context.bot.send_message(update.effective_chat.id, msg, parse_mode="Markdown", reply_markup=teclado)
-        await context.bot.send_message(CHANNEL_ID, msg, parse_mode="Markdown", reply_markup=teclado)
+        await context.bot.send_message(update.effective_chat.id, caption, parse_mode='Markdown', reply_markup=keyboard)
+        await context.bot.send_message(CHANNEL_ID, caption, parse_mode='Markdown', reply_markup=keyboard)
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("✅ BOT PROFISSIONAL ONLINE")
-    app.run_polling()
+# =============================
+# INICIALIZAÇÃO
+# =============================
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+print("✅ BOT PYTHON PROFISSIONAL EM EXECUÇÃO")
+app.run_polling()
