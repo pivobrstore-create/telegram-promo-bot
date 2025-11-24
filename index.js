@@ -1,124 +1,107 @@
-// ==============================
-// index.js - BOT PREMIUM PROFISSIONAL (CORRIGIDO)
-// SEM ERROS DE SINTAXE
-// ==============================
+# =========================================
+# BOT TELEGRAM AMAZON - PYTHON PROFISSIONAL
+# FORMATO EXATO SOLICITADO PELO CLIENTE
+# =========================================
 
-import express from "express";
-import axios from "axios";
-import { Telegraf, Markup } from "telegraf";
+# Requisitos:
+# pip install python-telegram-bot==20.7 requests beautifulsoup4
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const RAINFOREST_API_KEY = process.env.RAINFOREST_API_KEY;
-const CHANNEL_ID = process.env.CHANNEL_ID;
+import requests
+from bs4 import BeautifulSoup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import re
 
-if (!BOT_TOKEN || !RAINFOREST_API_KEY || !CHANNEL_ID) {
-  console.error("❌ Configure BOT_TOKEN, RAINFOREST_API_KEY e CHANNEL_ID");
-  process.exit(1);
-}
+BOT_TOKEN = "SEU_TOKEN_DO_BOT"
+CHANNEL_ID = "SEU_ID_DO_CANAL"  # ex: -1001234567890
 
-const bot = new Telegraf(BOT_TOKEN);
-const app = express();
+# =============================
+# FUNÇÕES AUXILIARES
+# =============================
 
-// Expande link amzn.to
-async function expandLink(url) {
-  try {
-    const r = await axios.get(url, { maxRedirects: 5 });
-    return r.request.res.responseUrl || url;
-  } catch {
-    return url;
-  }
-}
-
-function brl(value) {
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
-
-async function getProductData(url) {
-  const r = await axios.get('https://api.rainforestapi.com/request', {
-    params: {
-      api_key: RAINFOREST_API_KEY,
-      type: 'product',
-      url: url
+def get_google_image(query):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
     }
-  });
-  return r.data.product;
-}
+    url = f"https://www.google.com/search?q={query}&tbm=isch"
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
+    img = soup.find("img")
+    return img['src'] if img else None
 
-function calcDiscount(oldPrice, newPrice) {
-  if (!oldPrice || !newPrice) return null;
-  return Math.round(((oldPrice - newPrice) / oldPrice) * 100);
-}
 
-function montarPost(produto, link) {
-  const title = produto.title;
-  const image = produto.images?.[0]?.link || null;
-  const priceNow = produto.buybox_winner?.price?.value || 0;
-
-  const rawOld = produto.buybox_winner?.price?.raw_old_price;
-  const oldPrice = rawOld ? parseFloat(rawOld.replace(/[R$ ]/g, '').replace(',', '.')) : null;
-
-  const percent = calcDiscount(oldPrice, priceNow);
-
-  const texto = `🔥 PRA FAZER ESTOQUEEEE!! 🔥\n\n` +
-  `*${title}*\n\n` +
-  (oldPrice ? `❌ ${brl(oldPrice)}\n` : '') +
-  `✅ ${brl(priceNow)}\n` +
-  (percent ? `(${percent}% OFF automático)\n\n` : '\n') +
-  `🚚 Frete grátis Prime\n` +
-  `⚠️ Pode subir a qualquer momento!\n\n` +
-  `Compre aqui:\n${link}`;
-
-  return { texto, image };
-}
-
-bot.on('text', async (ctx) => {
-  const msg = ctx.message.text;
-
-  if (!msg.includes('amazon') && !msg.includes('amzn.to')) {
-    return ctx.reply('Envie o link da Amazon para gerar oferta automática.');
-  }
-
-  try {
-    const finalLink = await expandLink(msg);
-    const produto = await getProductData(finalLink);
-    const { texto, image } = montarPost(produto, msg);
-
-    const keyboard = Markup.inlineKeyboard([
-      Markup.button.url('🛒 COMPRAR AGORA', msg)
-    ]);
-
-    if (image) {
-      await bot.telegram.sendPhoto(ctx.chat.id, image, { caption: texto, parse_mode: 'Markdown', ...keyboard });
-      await bot.telegram.sendPhoto(CHANNEL_ID, image, { caption: texto, parse_mode: 'Markdown', ...keyboard });
-    } else {
-      await bot.telegram.sendMessage(ctx.chat.id, texto, { parse_mode: 'Markdown', ...keyboard });
-      await bot.telegram.sendMessage(CHANNEL_ID, texto, { parse_mode: 'Markdown', ...keyboard });
+def get_amazon_data(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
     }
+    page = requests.get(url, headers=headers)
+    soup = BeautifulSoup(page.text, 'html.parser')
 
-  } catch (err) {
-    console.error(err);
-    ctx.reply('❌ Erro ao gerar oferta.');
-  }
-});
+    title = soup.find(id='productTitle')
+    title = title.get_text(strip=True) if title else "Produto Amazon"
 
-app.get('/', (_, res) => res.send('BOT PROFISSIONAL ONLINE ✅'));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Servidor rodando...'));
+    price = soup.select_one('.a-price .a-offscreen')
+    price = price.get_text(strip=True).replace('R$', '').replace(',', '.') if price else None
 
-bot.launch();
+    old_price = soup.select_one('.a-text-price span')
+    old_price = old_price.get_text(strip=True).replace('R$', '').replace(',', '.') if old_price else None
 
-// ==============================
-// package.json (CRIE ESTE ARQUIVO SEPARADO)
-// ==============================
-// {
-//   "name": "telegram-bot-premium",
-//   "version": "2.0.0",
-//   "main": "index.js",
-//   "type": "module",
-//   "scripts": { "start": "node index.js" },
-//   "dependencies": {
-//     "axios": "^1.6.7",
-//     "express": "^4.18.2",
-//     "telegraf": "^4.16.3"
-//   }
-// }
+    price = float(price) if price else None
+    old_price = float(old_price) if old_price else None
+
+    return title, price, old_price
+
+
+def calculate_discount(old, new):
+    if not old or not new:
+        return None
+    return round(((old - new) / old) * 100)
+
+
+def format_offer(title, price, old_price, discount, link):
+    return f"""
+🔥 PRA FAZER ESTOQUEEEE!! 🔥
+
+*{title}*
+
+❌ R$ {old_price if old_price else ''}
+✅ R$ {price}
+({discount}% OFF automático)
+
+🚚 Frete grátis Prime
+⚠️ Pode subir a qualquer momento!
+
+Compre aqui:
+{link}
+"""
+
+# =============================
+# BOT HANDLER
+# =============================
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if "amazon" not in text and "amzn.to" not in text:
+        await update.message.reply_text("Envie um link da Amazon.")
+        return
+
+    title, price, old_price = get_amazon_data(text)
+    discount = calculate_discount(old_price, price)
+    image = get_google_image(title)
+    caption = format_offer(title, price, old_price, discount, text)
+
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🛒 COMPRAR AGORA", url=text)]])
+
+    if image:
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
+        await context.bot.send_photo(chat_id=CHANNEL_ID, photo=image, caption=caption, parse_mode='Markdown', reply_markup=keyboard)
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, parse_mode='Markdown', reply_markup=keyboard)
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=caption, parse_mode='Markdown', reply_markup=keyboard)
+
+
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("✅ BOT PYTHON PROFISSIONAL ATIVO")
+    app.run_polling()
