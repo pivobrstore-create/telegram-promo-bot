@@ -1,49 +1,80 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+import re
+import requests
+from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-if not BOT_TOKEN or not CHANNEL_ID:
-    raise Exception("Configure BOT_TOKEN e CHANNEL_ID no Render")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-def extrair_imagem_amazon(url):
-    # força imagem da Amazon via OpenGraph
-    return f"https://api.microlink.io/?url={url}&screenshot=true&meta=false"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✅ Envie o link da Amazon com seu afiliado que eu crio a oferta automaticamente."
+    )
 
-def montar_texto(link):
-    return f"""🔥 PRA FAZER ESTOQUEEEE!! 🔥
+def coletar_dados_amazon(url):
+    r = requests.get(url, headers=HEADERS)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-OFERTA IMPERDÍVEL AMAZON 👇
+    titulo = soup.find(id="productTitle")
+    preco = soup.find("span", class_="a-offscreen")
+    imagem = soup.find("img", id="landingImage")
 
-✅ Confira agora o preço atualizado
+    nome = titulo.get_text(strip=True) if titulo else "Produto Amazon"
+    valor = preco.get_text(strip=True).replace("R$", "").strip() if preco else "0,00"
+    img = imagem["src"] if imagem else None
+
+    return nome, valor, img
+
+async def gerar_oferta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text.strip()
+
+    if "amazon" not in url:
+        await update.message.reply_text("❌ Envie um link válido da Amazon.")
+        return
+
+    nome, preco_atual, imagem = coletar_dados_amazon(url)
+
+    mensagem = f"""
+🔥 PRA FAZER ESTOQUEEEE!! 🔥
+
+{nome}
+
+❌ Preço antigo: R$ ---,--
+✅ Preço atual: R$ {preco_atual}
+
 🚚 Frete grátis Prime
 ⚠️ Pode subir a qualquer momento!
 
-Compre aqui:
-{link}
+👉 Compre aqui:
+{url}
 """
 
-async def processar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    link = update.message.text
+    if imagem:
+        await context.bot.send_photo(
+            chat_id=CHANNEL_ID,
+            photo=imagem,
+            caption=mensagem
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text=mensagem
+        )
 
-    if "amazon" not in link and "amzn.to" not in link:
-        await update.message.reply_text("Envie o LINK DA AMAZON.")
-        return
-    
-    imagem = extrair_imagem_amazon(link)
-    texto = montar_texto(link)
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    botoes = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 COMPRAR AGORA", url=link)]
-    ])
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gerar_oferta))
 
-    await context.bot.send_photo(update.effective_chat.id, imagem, caption=texto, reply_markup=botoes)
-    await context.bot.send_photo(CHANNEL_ID, imagem, caption=texto, reply_markup=botoes)
+    print("🤖 BOT ONLINE...")
+    app.run_polling()
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar))
-
-print("✅ BOT ONLINE 100% AUTOMÁTICO")
-app.run_polling()
+if __name__ == "__main__":
+    main()
