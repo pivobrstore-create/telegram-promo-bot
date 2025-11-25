@@ -1,5 +1,6 @@
 const axios = require('axios');
 
+// Resolve links encurtados (amzn.to)
 async function resolverLinkFinal(url) {
   const response = await axios.get(url, {
     maxRedirects: 5,
@@ -8,10 +9,10 @@ async function resolverLinkFinal(url) {
   return response.request.res.responseUrl || url;
 }
 
+// Extrai meta tags OG
 function extrairMeta(html, name) {
-  const match = html.match(
-    new RegExp(`<meta property="og:${name}" content="(.*?)"`)
-  );
+  const regex = new RegExp(`<meta property="og:${name}" content="(.*?)"`);
+  const match = html.match(regex);
   return match ? match[1] : null;
 }
 
@@ -20,9 +21,7 @@ async function obterProdutoAmazon(url, afiliado) {
     const linkFinal = await resolverLinkFinal(url);
 
     const { data } = await axios.get(linkFinal, {
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
 
     const nome = extrairMeta(data, "title") || "Produto Amazon";
@@ -34,8 +33,11 @@ async function obterProdutoAmazon(url, afiliado) {
     const precoAntigoMatch = data.match(/De:\s*R\$\s?([\d.,]+)/);
     const precoAntigo = precoAntigoMatch ? precoAntigoMatch[1] : precoAtual;
 
-    const desconto = precoAntigo !== precoAtual
-      ? Math.round(((parseFloat(precoAntigo.replace(",", ".")) - parseFloat(precoAtual.replace(",", "."))) / parseFloat(precoAntigo.replace(",", "."))) * 100)
+    const pAnt = parseFloat(precoAntigo.replace(",", "."));
+    const pAt = parseFloat(precoAtual.replace(",", "."));
+
+    const desconto = pAnt > pAt
+      ? Math.round(((pAnt - pAt) / pAnt) * 100)
       : 0;
 
     return {
@@ -45,13 +47,13 @@ async function obterProdutoAmazon(url, afiliado) {
       desconto,
       parcelamento: "em até 4x sem juros",
       entrega: "frete grátis Prime",
-      imagem,
-      tags: "#amazon #oferta #promoção",
+      imagem: imagem || "https://m.media-amazon.com/images/I/71ZpeFZ2bUL._AC_SL1500_.jpg",
+      tags: "#amazon #ofertas #promoção #desconto",
       linkAfiliado: `${linkFinal}?tag=${afiliado}`
     };
 
-  } catch (e) {
-    console.error("Erro ao buscar produto:", e.message);
+  } catch (error) {
+    console.error("Erro Amazon:", error.message);
     return null;
   }
 }
