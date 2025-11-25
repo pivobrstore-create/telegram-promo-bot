@@ -1,19 +1,27 @@
 const axios = require('axios');
 
-// Resolve links encurtados (amzn.to)
+const IMAGEM_FALLBACK = "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg";
+
+// resolve links encurtados
 async function resolverLinkFinal(url) {
-  const response = await axios.get(url, {
-    maxRedirects: 5,
-    validateStatus: null
-  });
-  return response.request.res.responseUrl || url;
+  const res = await axios.get(url, { maxRedirects: 5, validateStatus: null });
+  return res.request.res.responseUrl || url;
 }
 
-// Extrai meta tags OG
-function extrairMeta(html, name) {
-  const regex = new RegExp(`<meta property="og:${name}" content="(.*?)"`);
+// extrai meta tags
+function extrairMeta(html, tag) {
+  const regex = new RegExp(`<meta property="og:${tag}" content="(.*?)"`);
   const match = html.match(regex);
   return match ? match[1] : null;
+}
+
+async function validarImagem(url) {
+  try {
+    const head = await axios.head(url);
+    return head.headers['content-type'].startsWith('image');
+  } catch {
+    return false;
+  }
 }
 
 async function obterProdutoAmazon(url, afiliado) {
@@ -25,7 +33,11 @@ async function obterProdutoAmazon(url, afiliado) {
     });
 
     const nome = extrairMeta(data, "title") || "Produto Amazon";
-    const imagem = extrairMeta(data, "image");
+    let imagem = extrairMeta(data, "image") || IMAGEM_FALLBACK;
+
+    if (!(await validarImagem(imagem))) {
+      imagem = IMAGEM_FALLBACK;
+    }
 
     const precoAtualMatch = data.match(/R\$\s?([\d.,]+)/);
     const precoAtual = precoAtualMatch ? precoAtualMatch[1] : "0";
@@ -36,9 +48,7 @@ async function obterProdutoAmazon(url, afiliado) {
     const pAnt = parseFloat(precoAntigo.replace(",", "."));
     const pAt = parseFloat(precoAtual.replace(",", "."));
 
-    const desconto = pAnt > pAt
-      ? Math.round(((pAnt - pAt) / pAnt) * 100)
-      : 0;
+    const desconto = pAnt > pAt ? Math.round(((pAnt - pAt) / pAnt) * 100) : 0;
 
     return {
       nome,
@@ -47,13 +57,13 @@ async function obterProdutoAmazon(url, afiliado) {
       desconto,
       parcelamento: "em até 4x sem juros",
       entrega: "frete grátis Prime",
-      imagem: imagem || "https://m.media-amazon.com/images/I/71ZpeFZ2bUL._AC_SL1500_.jpg",
+      imagem,
       tags: "#amazon #ofertas #promoção #desconto",
       linkAfiliado: `${linkFinal}?tag=${afiliado}`
     };
 
-  } catch (error) {
-    console.error("Erro Amazon:", error.message);
+  } catch (e) {
+    console.error("Erro Amazon:", e.message);
     return null;
   }
 }
