@@ -5,29 +5,41 @@ const TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const AFFILIATE_LINK = process.env.AFFILIATE_LINK;
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+if (!TOKEN || !CHANNEL_ID || !AFFILIATE_LINK) {
+  throw new Error("Configure BOT_TOKEN, CHANNEL_ID e AFFILIATE_LINK no Render.");
+}
+
+// Inicialização segura (evita conflito 409)
+const bot = new TelegramBot(TOKEN, {
+  polling: {
+    autoStart: true,
+    interval: 300,
+    params: { timeout: 10 }
+  }
+});
 
 bot.onText(/\/oferta (.+)/, async (msg, match) => {
   const linkProduto = match[1];
 
-  const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
+  try {
+    const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
 
-  if (!produto) {
-    bot.sendMessage(msg.chat.id, "Erro ao buscar produto.");
-    return;
-  }
+    if (!produto) {
+      await bot.sendMessage(msg.chat.id, "❌ Não foi possível capturar os dados do produto.");
+      return;
+    }
 
-  const legenda = `
+    const legenda = `
 🔥 TA NA HORA DE COMPRAR HEINNN! 🔥🔥
 
 ${produto.nome}
 
-❌ R$${produto.precoAntigo}
-✅ R$${produto.precoAtual}
+❌ R$ ${produto.precoAntigo}
+✅ R$ ${produto.precoAtual}
 💥 Desconto de ${produto.desconto}%
 
-${produto.parcelamento}
-(${produto.entrega})
+📦 ${produto.parcelamento}
+🚚 ${produto.entrega}
 
 ${produto.tags}
 
@@ -35,8 +47,13 @@ ${produto.tags}
 ${produto.linkAfiliado}
 `;
 
-  await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda });
-  await bot.sendMessage(msg.chat.id, "✅ Oferta publicada!");
+    await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda.trim() });
+    await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com sucesso!");
+
+  } catch (error) {
+    console.error("Erro geral:", error.message);
+    await bot.sendMessage(msg.chat.id, "Erro inesperado ao gerar a oferta.");
+  }
 });
 
-console.log("BOT AMAZON ONLINE");
+console.log("✅ BOT AMAZON ONLINE");
