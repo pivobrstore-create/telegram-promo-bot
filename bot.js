@@ -10,25 +10,19 @@ if (!TOKEN || !CHANNEL_ID || !AFFILIATE_LINK) {
 }
 
 const bot = new TelegramBot(TOKEN, {
-  polling: {
-    autoStart: true,
-    interval: 300,
-    params: { timeout: 10 }
-  }
+  polling: { autoStart: true }
 });
 
 bot.onText(/\/oferta (.+)/, async (msg, match) => {
   const linkProduto = match[1];
 
-  try {
-    const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
+  const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
 
-    if (!produto) {
-      await bot.sendMessage(msg.chat.id, "❌ Erro ao gerar oferta.");
-      return;
-    }
+  if (!produto) {
+    return bot.sendMessage(msg.chat.id, "❌ Não foi possível gerar a oferta.");
+  }
 
-    const legenda = `
+  const legenda = `
 🔥 TA NA HORA DE COMPRAR HEINNN! 🔥🔥
 
 ${produto.nome}
@@ -41,23 +35,23 @@ ${produto.nome}
 🚚 ${produto.entrega}
 
 ${produto.tags}
-
-🛒 COMPRE AQUI:
-${produto.linkAfiliado}
 `;
 
-    try {
-      await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda.trim() });
-    } catch (imgError) {
-      console.log("Falha ao enviar imagem, enviando texto...");
-      await bot.sendMessage(CHANNEL_ID, legenda.trim());
+  await bot.sendPhoto(CHANNEL_ID, produto.imagem, {
+    caption: legenda.trim(),
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "🛒 COMPRAR AGORA",
+            url: produto.linkAfiliado
+          }
+        ]
+      ]
     }
+  });
 
-    await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com sucesso!");
-
-  } catch (e) {
-    console.error("Erro geral:", e.message);
-  }
+  await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com sucesso!");
 });
 
 console.log("✅ BOT AMAZON ONLINE");
