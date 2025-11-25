@@ -1,27 +1,19 @@
 const axios = require('axios');
 
-const IMAGEM_FALLBACK = "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg";
-
-// resolve links encurtados
 async function resolverLinkFinal(url) {
   const res = await axios.get(url, { maxRedirects: 5, validateStatus: null });
   return res.request.res.responseUrl || url;
 }
 
-// extrai meta tags
-function extrairMeta(html, tag) {
-  const regex = new RegExp(`<meta property="og:${tag}" content="(.*?)"`);
-  const match = html.match(regex);
-  return match ? match[1] : null;
+function extrairImagemAlta(html) {
+  const match = html.match(/"hiRes":"(https:[^"]+)"/);
+  if (match) return match[1].replace(/\\u0026/g, '&');
+  return "https://m.media-amazon.com/images/I/71ZpeFZ2bUL._AC_SL1500_.jpg";
 }
 
-async function validarImagem(url) {
-  try {
-    const head = await axios.head(url);
-    return head.headers['content-type'].startsWith('image');
-  } catch {
-    return false;
-  }
+function extrairTitulo(html) {
+  const match = html.match(/<title>(.*?)<\/title>/);
+  return match ? match[1].replace("Amazon.com.br:", "").trim() : "Produto Amazon";
 }
 
 async function obterProdutoAmazon(url, afiliado) {
@@ -32,12 +24,8 @@ async function obterProdutoAmazon(url, afiliado) {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const nome = extrairMeta(data, "title") || "Produto Amazon";
-    let imagem = extrairMeta(data, "image") || IMAGEM_FALLBACK;
-
-    if (!(await validarImagem(imagem))) {
-      imagem = IMAGEM_FALLBACK;
-    }
+    const nome = extrairTitulo(data);
+    const imagem = extrairImagemAlta(data);
 
     const precoAtualMatch = data.match(/R\$\s?([\d.,]+)/);
     const precoAtual = precoAtualMatch ? precoAtualMatch[1] : "0";
