@@ -2,9 +2,11 @@
   "name": "amazon-bot",
   "version": "1.0.0",
   "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
+  "scripts": {
+    "start": "node bot.js"
+  },
   "dependencies": {
-    "node-telegram-bot-api": "^0.61.0",
-    "axios": "^1.6.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "axios": "^1.7.7"
   }
 }
