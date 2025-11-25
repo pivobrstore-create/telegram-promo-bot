@@ -1,28 +1,57 @@
 const axios = require('axios');
 
+async function resolverLinkFinal(url) {
+  const response = await axios.get(url, {
+    maxRedirects: 5,
+    validateStatus: null
+  });
+  return response.request.res.responseUrl || url;
+}
+
+function extrairMeta(html, name) {
+  const match = html.match(
+    new RegExp(`<meta property="og:${name}" content="(.*?)"`)
+  );
+  return match ? match[1] : null;
+}
+
 async function obterProdutoAmazon(url, afiliado) {
   try {
-    const { data } = await axios.get(url);
+    const linkFinal = await resolverLinkFinal(url);
 
-    const nome = (data.match(/<title>(.*?)<\/title>/i) || ["", "Produto Amazon"])[1];
-    const precoAtual = (data.match(/priceblock_ourprice">R\$\s([\d.,]+)/i) || ["", "0"])[1];
-    const precoAntigo = (data.match(/priceblock_strikeprice">R\$\s([\d.,]+)/i) || ["", precoAtual])[1];
+    const { data } = await axios.get(linkFinal, {
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
 
-    const desconto = Math.round(((parseFloat(precoAntigo) - parseFloat(precoAtual)) / parseFloat(precoAntigo)) * 100 || 0);
+    const nome = extrairMeta(data, "title") || "Produto Amazon";
+    const imagem = extrairMeta(data, "image");
+
+    const precoAtualMatch = data.match(/R\$\s?([\d.,]+)/);
+    const precoAtual = precoAtualMatch ? precoAtualMatch[1] : "0";
+
+    const precoAntigoMatch = data.match(/De:\s*R\$\s?([\d.,]+)/);
+    const precoAntigo = precoAntigoMatch ? precoAntigoMatch[1] : precoAtual;
+
+    const desconto = precoAntigo !== precoAtual
+      ? Math.round(((parseFloat(precoAntigo.replace(",", ".")) - parseFloat(precoAtual.replace(",", "."))) / parseFloat(precoAntigo.replace(",", "."))) * 100)
+      : 0;
 
     return {
       nome,
       precoAtual,
       precoAntigo,
       desconto,
-      parcelamento: "até 4x sem juros",
+      parcelamento: "em até 4x sem juros",
       entrega: "frete grátis Prime",
-      imagem: "https://m.media-amazon.com/images/I/71ZpeFZ2bUL._AC_SL1500_.jpg",
-      tags: "#amazon #licor #bebidas #oferta",
-      linkAfiliado: `${url}?tag=${afiliado}`
+      imagem,
+      tags: "#amazon #oferta #promoção",
+      linkAfiliado: `${linkFinal}?tag=${afiliado}`
     };
 
   } catch (e) {
+    console.error("Erro ao buscar produto:", e.message);
     return null;
   }
 }
