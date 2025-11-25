@@ -1,64 +1,43 @@
-
 const TelegramBot = require('node-telegram-bot-api');
+const { getProductData } = require('./amazon');
 
 const TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
+const AFFILIATE_TAG = process.env.AFFILIATE_TAG;
 
-if (!TOKEN || !CHANNEL_ID) {
-  throw new Error("Defina BOT_TOKEN e CHANNEL_ID nas variáveis de ambiente.");
+if (!TOKEN || !CHANNEL_ID || !AFFILIATE_TAG) {
+  throw new Error("Configure BOT_TOKEN, CHANNEL_ID e AFFILIATE_TAG.");
 }
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-function formatPromo(category, link) {
+function formatPost(p) {
   return `
-🔥 PROMOÇÃO EM ${category.toUpperCase()} 🔥
+🛒 ${p.title}
 
-💥 Oferta especial detectada!
-⏳ Pode acabar a qualquer momento.
+💰 Preço: R$ ${p.price}
+❌ De: R$ ${p.oldPrice}
+🔥 Desconto: ${p.discount}%
 
-👉 Garanta agora:
-${link}
+🏷️ Tags: ${p.tags.join(", ")}
 
-#promoção #${category.toLowerCase()} #desconto #oferta
+📦 Comprar agora:
+${p.affiliateLink}
 `.trim();
 }
 
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id,
-    "🤖 BOT DE PROMOÇÕES ATIVO\n\n" +
-    "Use:\n" +
-    "/promo CATEGORIA LINK\n\n" +
-    "Exemplo:\n" +
-    "/promo tecnologia https://amazon.com/..."
-  );
-});
+bot.onText(/\/oferta (.+)/, async (msg, match) => {
+  const link = match[1];
+  const product = await getProductData(link, AFFILIATE_TAG);
 
-bot.onText(/\/help/, (msg) => {
-  bot.sendMessage(msg.chat.id,
-    "📌 Comandos disponíveis:\n\n" +
-    "/start - Inicia o bot\n" +
-    "/help - Ajuda\n" +
-    "/promo <categoria> <link> - Publicar promoção"
-  );
-});
-
-bot.onText(/\/promo (.+)/, (msg, match) => {
-  const chatId = msg.chat.id;
-  const args = match[1].split(" ");
-
-  if (args.length < 2) {
-    bot.sendMessage(chatId, "Uso correto: /promo CATEGORIA LINK");
+  if (!product) {
+    bot.sendMessage(msg.chat.id, "Erro ao coletar dados do produto.");
     return;
   }
 
-  const category = args[0];
-  const link = args[1];
-  const message = formatPromo(category, link);
-
-  bot.sendMessage(CHANNEL_ID, message, { parse_mode: "HTML" })
-    .then(() => bot.sendMessage(chatId, "✅ Promoção enviada ao canal!"))
-    .catch(err => bot.sendMessage(chatId, "❌ Erro ao enviar promoção."));
+  const mensagem = formatPost(product);
+  await bot.sendMessage(CHANNEL_ID, mensagem);
+  await bot.sendPhoto(CHANNEL_ID, product.image);
 });
 
-console.log("BOT ONLINE...");
+console.log("🟢 BOT Amazon Ofertas ONLINE");
