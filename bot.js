@@ -9,7 +9,6 @@ if (!TOKEN || !CHANNEL_ID || !AFFILIATE_LINK) {
   throw new Error("Configure BOT_TOKEN, CHANNEL_ID e AFFILIATE_LINK no Render.");
 }
 
-// Inicialização segura (evita conflito 409)
 const bot = new TelegramBot(TOKEN, {
   polling: {
     autoStart: true,
@@ -25,7 +24,7 @@ bot.onText(/\/oferta (.+)/, async (msg, match) => {
     const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
 
     if (!produto) {
-      await bot.sendMessage(msg.chat.id, "❌ Não foi possível capturar os dados do produto.");
+      await bot.sendMessage(msg.chat.id, "❌ Erro ao gerar oferta.");
       return;
     }
 
@@ -43,16 +42,21 @@ ${produto.nome}
 
 ${produto.tags}
 
-🛒 Compre aqui:
+🛒 COMPRE AQUI:
 ${produto.linkAfiliado}
 `;
 
-    await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda.trim() });
+    try {
+      await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda.trim() });
+    } catch (imgError) {
+      console.log("Falha ao enviar imagem, enviando texto...");
+      await bot.sendMessage(CHANNEL_ID, legenda.trim());
+    }
+
     await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com sucesso!");
 
-  } catch (error) {
-    console.error("Erro geral:", error.message);
-    await bot.sendMessage(msg.chat.id, "Erro inesperado ao gerar a oferta.");
+  } catch (e) {
+    console.error("Erro geral:", e.message);
   }
 });
 
