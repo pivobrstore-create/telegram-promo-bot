@@ -1,43 +1,42 @@
 const TelegramBot = require('node-telegram-bot-api');
-const { getProductData } = require('./amazon');
+const { obterProdutoAmazon } = require('./amazonScraper');
 
 const TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
-const AFFILIATE_TAG = process.env.AFFILIATE_TAG;
-
-if (!TOKEN || !CHANNEL_ID || !AFFILIATE_TAG) {
-  throw new Error("Configure BOT_TOKEN, CHANNEL_ID e AFFILIATE_TAG.");
-}
+const AFFILIATE_LINK = process.env.AFFILIATE_LINK;
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-function formatPost(p) {
-  return `
-🛒 ${p.title}
-
-💰 Preço: R$ ${p.price}
-❌ De: R$ ${p.oldPrice}
-🔥 Desconto: ${p.discount}%
-
-🏷️ Tags: ${p.tags.join(", ")}
-
-📦 Comprar agora:
-${p.affiliateLink}
-`.trim();
-}
-
 bot.onText(/\/oferta (.+)/, async (msg, match) => {
-  const link = match[1];
-  const product = await getProductData(link, AFFILIATE_TAG);
+  const linkProduto = match[1];
 
-  if (!product) {
-    bot.sendMessage(msg.chat.id, "Erro ao coletar dados do produto.");
+  const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
+
+  if (!produto) {
+    bot.sendMessage(msg.chat.id, "Erro ao buscar produto.");
     return;
   }
 
-  const mensagem = formatPost(product);
-  await bot.sendMessage(CHANNEL_ID, mensagem);
-  await bot.sendPhoto(CHANNEL_ID, product.image);
+  const legenda = `
+🔥 TA NA HORA DE COMPRAR HEINNN! 🔥🔥
+
+${produto.nome}
+
+❌ R$${produto.precoAntigo}  
+✅ R$${produto.precoAtual}  
+💥 Desconto de ${produto.desconto}%  
+
+📦 ${produto.parcelamento}
+🚚 ${produto.entrega}
+
+${produto.tags}
+
+💳 Compre Aqui:
+${produto.linkAfiliado}
+`;
+
+  await bot.sendPhoto(CHANNEL_ID, produto.imagem, { caption: legenda });
+  await bot.sendMessage(msg.chat.id, "✅ Oferta publicada!");
 });
 
-console.log("🟢 BOT Amazon Ofertas ONLINE");
+console.log("BOT AMAZON ONLINE");
