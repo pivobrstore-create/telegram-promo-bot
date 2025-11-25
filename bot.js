@@ -22,16 +22,16 @@ bot.onText(/\/oferta (.+)/, async (msg, match) => {
 
 ${produto.nome}
 
-❌ R$${produto.precoAntigo}  
-✅ R$${produto.precoAtual}  
-💥 Desconto de ${produto.desconto}%  
+❌ R$${produto.precoAntigo}
+✅ R$${produto.precoAtual}
+💥 Desconto de ${produto.desconto}%
 
-📦 ${produto.parcelamento}
-🚚 ${produto.entrega}
+${produto.parcelamento}
+(${produto.entrega})
 
 ${produto.tags}
 
-💳 Compre Aqui:
+🛒 Compre aqui:
 ${produto.linkAfiliado}
 `;
 
