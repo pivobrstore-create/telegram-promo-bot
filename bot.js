@@ -3,7 +3,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { obterProdutoAmazon } = require('./amazonScraper');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const axios = require('axios');
 const fs = require('fs');
 
@@ -31,11 +31,14 @@ const client = new Client({
   }
 });
 
-client.on('qr', qr => {
-  qrcode.generate(qr, { small: true });
-  console.log('📱 Escaneie o QR Code acima para conectar o WhatsApp');
+// QR CODE REAL E LEGÍVEL
+client.on('qr', async qr => {
+  const qrImage = await QRCode.toDataURL(qr);
+  console.log('📱 COPIE este link e cole no navegador para ver o QR Code:');
+  console.log(qrImage);
 });
 
+// Quando conectar
 client.on('ready', () => {
   whatsappPronto = true;
   console.log('✅ WhatsApp conectado e pronto para repostar');
@@ -77,7 +80,7 @@ ${produto.escassez}
 ${produto.tags}
 `.trim();
 
-    // ===== ENVIA PARA O TELEGRAM =====
+    // ===== ENVIA PARA TELEGRAM =====
     await bot.sendPhoto(CHANNEL_ID, produto.imagem, {
       caption: legenda,
       reply_markup: {
@@ -94,7 +97,7 @@ ${produto.tags}
 
     // ===== ENVIA PARA WHATSAPP =====
     if (!whatsappPronto) {
-      console.log('⏳ WhatsApp ainda não está pronto, aguardando conexão...');
+      console.log('⏳ WhatsApp ainda não está pronto. Aguarde conexão...');
       return;
     }
 
@@ -115,12 +118,12 @@ ${produto.tags}
     console.log('📲 Oferta enviada para WhatsApp com sucesso!');
 
   } catch (erro) {
-    console.log('❌ Erro geral no processamento da oferta:', erro.message);
+    console.log('❌ Erro no processamento:', erro.message);
   }
 });
 
 // ===== LOG FINAL =====
 console.log("✅ BOT AMAZON + WHATSAPP ONLINE – IA AVANÇADA ATIVA");
 
-// INICIALIZA WHATSAPP
+// Inicializa WhatsApp
 client.initialize();
