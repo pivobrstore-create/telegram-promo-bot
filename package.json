@@ -1,7 +1,18 @@
-"dependencies": {
-  "node-telegram-bot-api": "^0.66.0",
-  "whatsapp-web.js": "^1.23.0",
-  "axios": "^1.7.7",
-  "dotenv": "^16.4.5",
-  "qrcode": "^1.5.4"
+{
+  "name": "amazon-bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "whatsapp-web.js": "^1.23.0",
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "qrcode": "^1.5.4"
+  }
 }
