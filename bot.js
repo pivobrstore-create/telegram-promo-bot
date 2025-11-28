@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const TelegramBot = require('node-telegram-bot-api');
 const { obterProdutoAmazon } = require('./amazonScraper');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
@@ -20,20 +21,27 @@ if (!TOKEN || !CHANNEL_ID || !AFFILIATE_LINK || !GRUPO_WHATSAPP) {
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // ===== BOT WHATSAPP =====
+let whatsappPronto = false;
+
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './session' })
+  authStrategy: new LocalAuth({ dataPath: './session' }),
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  }
 });
 
 client.on('qr', qr => {
   qrcode.generate(qr, { small: true });
-  console.log('📱 Escaneie o QR Code para conectar o WhatsApp');
+  console.log('📱 Escaneie o QR Code acima para conectar o WhatsApp');
 });
 
 client.on('ready', () => {
+  whatsappPronto = true;
   console.log('✅ WhatsApp conectado e pronto para repostar');
 });
 
-// ===== EVITAR DUPLICAÇÕES =====
+// ===== CONTROLE DE DUPLICAÇÃO =====
 if (!fs.existsSync('lastPost.json')) {
   fs.writeFileSync('lastPost.json', JSON.stringify({ texto: "" }));
 }
@@ -42,13 +50,14 @@ if (!fs.existsSync('lastPost.json')) {
 bot.onText(/\/oferta (.+)/, async (msg, match) => {
   const linkProduto = match[1];
 
-  const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
+  try {
+    const produto = await obterProdutoAmazon(linkProduto, AFFILIATE_LINK);
 
-  if (!produto) {
-    return bot.sendMessage(msg.chat.id, "❌ Não consegui montar a oferta desse produto.");
-  }
+    if (!produto) {
+      return bot.sendMessage(msg.chat.id, "❌ Não consegui montar a oferta desse produto.");
+    }
 
-  const legenda = `
+    const legenda = `
 ${produto.intro} 🔥
 
 ${produto.nome}
@@ -66,28 +75,31 @@ ${produto.escassez}
 🚚 ${produto.entrega}
 
 ${produto.tags}
-`;
+`.trim();
 
-  // PUBLICA NO TELEGRAM
-  await bot.sendPhoto(CHANNEL_ID, produto.imagem, {
-    caption: legenda.trim(),
-    reply_markup: {
-      inline_keyboard: [[
-        {
-          text: "🛒 COMPRAR AGORA",
-          url: produto.linkAfiliado
-        }
-      ]]
+    // ===== ENVIA PARA O TELEGRAM =====
+    await bot.sendPhoto(CHANNEL_ID, produto.imagem, {
+      caption: legenda,
+      reply_markup: {
+        inline_keyboard: [[
+          {
+            text: "🛒 COMPRAR AGORA",
+            url: produto.linkAfiliado
+          }
+        ]]
+      }
+    });
+
+    await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com IA avançada!");
+
+    // ===== ENVIA PARA WHATSAPP =====
+    if (!whatsappPronto) {
+      console.log('⏳ WhatsApp ainda não está pronto, aguardando conexão...');
+      return;
     }
-  });
-
-  await bot.sendMessage(msg.chat.id, "✅ Oferta publicada com IA avançada!");
-
-  // ========= ENVIA PARA WHATSAPP =========
-  try {
 
     const last = JSON.parse(fs.readFileSync('lastPost.json'));
-    if (last.texto === legenda.trim()) return;
+    if (last.texto === legenda) return;
 
     const imageResponse = await axios.get(produto.imagem, { responseType: 'arraybuffer' });
     const media = new MessageMedia(
@@ -96,16 +108,19 @@ ${produto.tags}
     );
 
     await client.sendMessage(GRUPO_WHATSAPP, media, {
-      caption: `${legenda.trim()}\n\n🛒 COMPRAR AGORA:\n${produto.linkAfiliado}`
+      caption: `${legenda}\n\n🛒 COMPRAR AGORA:\n${produto.linkAfiliado}`
     });
 
-    fs.writeFileSync('lastPost.json', JSON.stringify({ texto: legenda.trim() }));
-
+    fs.writeFileSync('lastPost.json', JSON.stringify({ texto: legenda }));
     console.log('📲 Oferta enviada para WhatsApp com sucesso!');
 
   } catch (erro) {
-    console.log('Erro ao enviar para WhatsApp:', erro.message);
+    console.log('❌ Erro geral no processamento da oferta:', erro.message);
   }
 });
 
+// ===== LOG FINAL =====
 console.log("✅ BOT AMAZON + WHATSAPP ONLINE – IA AVANÇADA ATIVA");
+
+// INICIALIZA WHATSAPP
+client.initialize();
