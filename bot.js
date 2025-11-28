@@ -1,3 +1,4 @@
+require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { obterProdutoAmazon } = require('./amazonScraper');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
